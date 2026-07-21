@@ -55,23 +55,50 @@ const cv = document.getElementById("game");
 const ctx = cv.getContext("2d");
 
 /* ---------- responsive stage ----------
-   Phones get a tall portrait kitchen: a much longer floor to creep
-   across, which makes the sneak read properly on a small screen.   */
+   The canvas is built to the phone's OWN aspect ratio so it fills the screen
+   1:1 and nothing gets shrunk. (A fixed 620x1040 canvas was being letterboxed
+   down to ~69% on a typical phone — which is why all the text was tiny.)     */
 const TOUCH = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
-const PORTRAIT = (window.innerHeight > window.innerWidth * 1.02) || window.innerWidth < 780;
+const VW = Math.max(300, window.innerWidth), VH = Math.max(420, window.innerHeight);
+const PORTRAIT = (VH > VW * 1.02) || VW < 780;
 const MOBILE = TOUCH || PORTRAIT;
-const W = PORTRAIT ? 620 : 960;
-const H = PORTRAIT ? 1040 : 600;
-cv.width = W; cv.height = H;
 if(MOBILE) document.body.classList.add("mobile");
 
+const DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+const W = PORTRAIT ? Math.round(Math.min(VW, 540)) : 960;
+const H = PORTRAIT ? Math.round(Math.min(W*2.35, Math.max(W*1.45, W * VH / VW))) : 600;
+// Backing store is sized to the REAL on-screen pixels (device ratio x fit scale),
+// so the game is pixel-crisp whether it's shrunk on a small phone or blown up on
+// a tablet. RS is re-derived in fitStage and re-applied every frame.
+let FIT = 1, RS = DPR;
+
+// Everything is authored against a 430px-wide phone and scaled from there.
+const SC = PORTRAIT ? W/430 : 1;              // world / furniture scale
+const TS = PORTRAIT ? 1.34*SC : 1;            // text scale — phones need big type
+const fnt = (px, bold) => (bold?"bold ":"") + Math.round(px*TS) + "px 'Comic Sans MS', 'Trebuchet MS', Arial";
+
+// iPhone notch / Android cutout, so the scoreboard never hides underneath it
+let SAFE_TOP = 0;
+(function(){
+  try{
+    const p = document.createElement("div");
+    p.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;padding-top:env(safe-area-inset-top,0px);";
+    document.body.appendChild(p);
+    SAFE_TOP = Math.min(48, parseFloat(getComputedStyle(p).paddingTop) || 0);
+    p.remove();
+  }catch(e){ SAFE_TOP = 0; }
+})();
+
 function fitStage(){
-  const chromeH = document.body.classList.contains("mobile") ? 0 : 116;
-  const availW = window.innerWidth  - (document.body.classList.contains("mobile") ? 0 : 40);
+  const chromeH = MOBILE ? 0 : 116;
+  const availW = window.innerWidth  - (MOBILE ? 0 : 40);
   const availH = window.innerHeight - chromeH;
-  const s = Math.min(availW / W, availH / H);
-  cv.style.width  = Math.floor(W * s) + "px";
-  cv.style.height = Math.floor(H * s) + "px";
+  FIT = Math.min(availW / W, availH / H);
+  RS  = DPR * FIT;
+  cv.width  = Math.round(W * RS);      // note: this resets ctx state, so the
+  cv.height = Math.round(H * RS);      // frame loop re-applies the transform
+  cv.style.width  = Math.floor(W * FIT) + "px";
+  cv.style.height = Math.floor(H * FIT) + "px";
 }
 addEventListener("resize", fitStage);
 addEventListener("orientationchange", ()=>setTimeout(fitStage, 250));
@@ -186,7 +213,11 @@ function canvasPos(e){
   const r = cv.getBoundingClientRect();
   return { x:(e.clientX - r.left) * (W / r.width), y:(e.clientY - r.top) * (H / r.height) };
 }
-function pauseBtn(){ const r = MOBILE?30:22; return {x:W-r-16, y:r+16, r}; }
+function pauseBtn(){
+  const r = PORTRAIT ? 21*SC : (MOBILE?30:22);
+  return PORTRAIT ? {x: W-r-10*SC, y: SAFE_TOP + 6*SC + 13*SC, r}
+                  : {x: W-r-16, y: r+16, r};
+}
 function hitBtn(b,p){ return Math.hypot(p.x-b.x, p.y-b.y) < b.r*1.5; }
 
 cv.addEventListener("pointerdown", e=>{
@@ -247,9 +278,10 @@ cv.addEventListener("pointercancel", endStick, {passive:false});
 cv.addEventListener("contextmenu", e=>e.preventDefault());
 
 function handlePauseTap(p){
-  const bw = Math.min(420, W-60), bx = (W-bw)/2, by = (H-252)/2;
+  const RH = PAUSE_ROW_H, bw = Math.min(420, W-40);
+  const bh = PAUSE_TOP+RH*5+40, bx = (W-bw)/2, by = (H-bh)/2;
   for(let i=0;i<5;i++){
-    if(p.y > by+90+i*30 && p.y < by+122+i*30 && p.x>bx && p.x<bx+bw){
+    if(p.y > by+PAUSE_TOP+i*RH && p.y < by+PAUSE_TOP+(i+1)*RH && p.x>bx && p.x<bx+bw){
       const act = ["resume","restart","music","mute","quit"][i];
       S.ui();
       if(act==="resume") paused = false;
@@ -264,23 +296,33 @@ function handlePauseTap(p){
 }
 
 /* ---------- world ---------- */
-const FLOOR_TOP = PORTRAIT ? 210 : 168;
-const SINK_Y    = FLOOR_TOP + 28;      // where the washer stands
-const START     = {x: W/2 + 46, y: H - 46};   // sneaker spawn, far end of the room
-const PEGBOX    = {x: W/2 - 74, y: H - 36};   // the peg basket — reload here after every peg
+// On a phone the scoreboard gets its own band at the very top and the kitchen
+// starts below it, so the HUD can never sit on top of Shonty or his warnings.
+const HUD_H     = PORTRAIT ? Math.round(94*SC) + SAFE_TOP : 0;
+// budget below the HUD band: ~40 for the status strip, then window, then counter
+const FLOOR_TOP = PORTRAIT ? HUD_H + Math.round(190*SC) : 168;
+const SINK_Y    = FLOOR_TOP + Math.round(32*SC);   // where the washer stands
+const START     = {x: W*0.63, y: H - 46*SC};       // sneaker spawn, far end of the room
+const PEGBOX    = {x: W*0.26, y: H - 34*SC};       // reload here after every peg
 const PEG_COLS  = ["#ff5d73","#ffd93d","#5ec8ff","#8ce99a","#c77dff","#ff9f45","#4dd4ac"];
 
+// Furniture is placed as a fraction of the room, so it lays out correctly on
+// any screen shape: fx across, fy down the floor.
+function furn(fx, fy, w, h, kind){
+  const fw = w*SC, fh = h*SC;
+  return {x: fx*W - fw/2, y: FLOOR_TOP + fy*(H-FLOOR_TOP) - fh/2, w:fw, h:fh, kind};
+}
 const FURNITURE = PORTRAIT ? [
-  // a long galley kitchen — six pockets of cover between you and the sink
-  {x: 30, y:296, w: 92, h: 76, kind:"plant"},
-  {x:430, y:300, w:104, h: 72, kind:"basket"},
-  {x:150, y:414, w:300, h: 62, kind:"table"},
-  {x: 40, y:552, w: 92, h: 58, kind:"chair"},
-  {x:432, y:566, w:150, h: 60, kind:"rug"},
-  {x:196, y:678, w:104, h: 72, kind:"basket"},
-  {x:428, y:756, w: 92, h: 76, kind:"plant"},
-  {x: 60, y:812, w:220, h: 60, kind:"table"},
-  {x:352, y:906, w:150, h: 56, kind:"rug"}
+  // a long galley kitchen — eight pockets of cover between you and the sink
+  furn(0.14, 0.07, 92, 74, "plant"),
+  furn(0.82, 0.11, 98, 70, "basket"),
+  furn(0.46, 0.24, 236, 60, "table"),
+  furn(0.13, 0.37, 90, 56, "chair"),
+  furn(0.80, 0.43, 126, 56, "rug"),
+  furn(0.30, 0.55, 98, 70, "basket"),
+  furn(0.85, 0.64, 92, 74, "plant"),
+  furn(0.29, 0.75, 196, 60, "table"),
+  furn(0.76, 0.84, 126, 54, "rug")
 ] : [
   {x:300, y:322, w:310, h:66, kind:"table"},
   {x: 78, y:288, w: 96, h:78, kind:"plant"},
@@ -289,7 +331,7 @@ const FURNITURE = PORTRAIT ? [
   {x:706, y:462, w:110, h:56, kind:"rug"}
 ];
 // standing in the shaded pocket behind a piece of furniture = invisible
-FURNITURE.forEach(f => f.hide = {x:f.x-10, y:f.y+f.h-14, w:f.w+20, h:64});
+FURNITURE.forEach(f => f.hide = {x:f.x-10*SC, y:f.y+f.h-14*SC, w:f.w+20*SC, h:64*SC});
 
 function hiddenAt(x,y){
   for(const f of FURNITURE){
@@ -626,23 +668,34 @@ function drawRoom(t){
   const g = ctx.createLinearGradient(0,0,0,FLOOR_TOP);
   g.addColorStop(0,"#bfe9ff"); g.addColorStop(1,"#8fd6f5");
   ctx.fillStyle=g; ctx.fillRect(0,0,W,FLOOR_TOP);
-  // window
-  const ww = Math.min(240, W*0.46), wh = Math.max(78, cTop-30), wx = W/2-ww/2, wy = 18;
-  ctx.fillStyle="#fff9e6"; roundRect(wx,wy,ww,wh,10,true,false);
-  ctx.fillStyle="#a8e6ff"; roundRect(wx+8,wy+8,ww-16,wh-16,7,true,false);
-  ctx.fillStyle="#ffe98a"; ctx.beginPath(); ctx.arc(wx+ww*0.29,wy+40,20,0,7); ctx.fill();
-  ctx.fillStyle="#fff";
-  for(let i=0;i<3;i++){ ctx.beginPath(); ctx.arc(wx+ww*0.58+i*24, wy+44+Math.sin(t*0.6+i)*5, 15-i*2, 0, 7); ctx.fill(); }
-  ctx.strokeStyle="#fff"; ctx.lineWidth=7;
-  ctx.beginPath();
-  ctx.moveTo(wx+ww/2,wy+4); ctx.lineTo(wx+ww/2,wy+wh-4);
-  ctx.moveTo(wx+4,wy+wh/2); ctx.lineTo(wx+ww-4,wy+wh/2); ctx.stroke();
-  // bunting
-  const flags = Math.ceil(W/62);
-  for(let i=0;i<flags;i++){
-    const x=i*62+14, y=6+Math.sin(i*0.9)*5;
-    ctx.fillStyle=["#ff6b81","#ffd93d","#6bcB77","#4d96ff","#c77dff"][i%5];
-    ctx.beginPath(); ctx.moveTo(x-14,y); ctx.lineTo(x+14,y); ctx.lineTo(x,y+24); ctx.closePath(); ctx.fill();
+  // window — on a phone it sits below the scoreboard band and status strip,
+  // and shrinks to fit rather than growing into the counter
+  const wy = PORTRAIT ? HUD_H + 46*SC : 18;
+  const ww = Math.min(240, W*0.52), wh = cTop - wy - 10, wx = W/2-ww/2;
+  if(wh >= 42){
+    ctx.fillStyle="#fff9e6"; roundRect(wx,wy,ww,wh,10,true,false);
+    ctx.fillStyle="#a8e6ff"; roundRect(wx+8,wy+8,ww-16,wh-16,7,true,false);
+    const sunR = Math.min(20, wh*0.24);
+    ctx.fillStyle="#ffe98a"; ctx.beginPath(); ctx.arc(wx+ww*0.29,wy+wh*0.40,sunR,0,7); ctx.fill();
+    ctx.fillStyle="#fff";
+    for(let i=0;i<3;i++){
+      ctx.beginPath();
+      ctx.arc(wx+ww*0.58+i*24, wy+wh*0.46+Math.sin(t*0.6+i)*4, Math.min(15-i*2, wh*0.2), 0, 7);
+      ctx.fill();
+    }
+    ctx.strokeStyle="#fff"; ctx.lineWidth=7;
+    ctx.beginPath();
+    ctx.moveTo(wx+ww/2,wy+4); ctx.lineTo(wx+ww/2,wy+wh-4);
+    ctx.moveTo(wx+4,wy+wh/2); ctx.lineTo(wx+ww-4,wy+wh/2); ctx.stroke();
+  }
+  // bunting (desktop only — on a phone that strip belongs to the scoreboard)
+  if(!PORTRAIT){
+    const flags = Math.ceil(W/62);
+    for(let i=0;i<flags;i++){
+      const x=i*62+14, y=6+Math.sin(i*0.9)*5;
+      ctx.fillStyle=["#ff6b81","#ffd93d","#6bcB77","#4d96ff","#c77dff"][i%5];
+      ctx.beginPath(); ctx.moveTo(x-14,y); ctx.lineTo(x+14,y); ctx.lineTo(x,y+24); ctx.closePath(); ctx.fill();
+    }
   }
   // counter + sink
   const sx = washerSinkX();
@@ -650,9 +703,39 @@ function drawRoom(t){
   ctx.fillStyle="#e2bd91"; ctx.fillRect(0,FLOOR_TOP-10,W,10);
   ctx.fillStyle="#cfd8e3"; roundRect(sx-92,cTop+6,184,44,8,true,false);
   ctx.fillStyle="#9fd7f2"; roundRect(sx-84,cTop+12,168,34,6,true,false);
+  // --- dishes in the sink ---
+  ctx.save();
+  ctx.beginPath(); roundRect(sx-84,cTop+12,168,34,6,false,false); ctx.clip();
+  ctx.fillStyle="#eef4f8"; ctx.strokeStyle="#c3d2dd"; ctx.lineWidth=3;
+  [[-56,20,0.32],[-34,15,-0.22],[46,18,0.16]].forEach(([dx,r,rot])=>{   // plates on edge
+    ctx.save(); ctx.translate(sx+dx, cTop+34); ctx.rotate(rot);
+    ctx.beginPath(); ctx.ellipse(0,0,r*0.42,r,0,0,7); ctx.fill(); ctx.stroke(); ctx.restore();
+  });
+  ctx.fillStyle="#ffd9e0";                                              // a mug
+  roundRect(sx+8,cTop+18,20,18,4,true,false);
+  ctx.strokeStyle="#ffb3c1"; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(sx+31,cTop+27,7,-1.2,1.2); ctx.stroke();
+  ctx.fillStyle="#cfe9a8"; roundRect(sx-14,cTop+22,16,14,3,true,false); // a little bowl
+  // foam on the water
+  ctx.fillStyle="rgba(255,255,255,.95)";
+  for(let i=0;i<16;i++){
+    const fx = sx-80 + i*10.5, fr = 7 + ((i*53)%9);
+    ctx.beginPath(); ctx.arc(fx, cTop+16 + Math.sin(t*1.6+i)*1.6, fr*0.62, 0, 7); ctx.fill();
+  }
+  ctx.restore();
   ctx.strokeStyle="#b9c4d1"; ctx.lineWidth=6; ctx.beginPath();
   ctx.moveTo(sx,cTop+6); ctx.lineTo(sx,cTop-20);
   ctx.arc(sx-16,cTop-20,16,0,Math.PI,true); ctx.stroke();
+  // draining rack of clean plates beside the sink
+  ctx.save();
+  const rx = sx + 118;
+  ctx.fillStyle="#eef4f8"; ctx.strokeStyle="#c3d2dd"; ctx.lineWidth=3;
+  for(let i=0;i<3;i++){
+    ctx.beginPath(); ctx.ellipse(rx+i*15, cTop+26, 5, 19, 0.06, 0, 7); ctx.fill(); ctx.stroke();
+  }
+  ctx.strokeStyle="#9fb3c4"; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(rx-14,cTop+46); ctx.lineTo(rx+44,cTop+46); ctx.stroke();
+  ctx.restore();
   // floor
   const cols = Math.ceil(W/70), rows = Math.ceil((H-FLOOR_TOP)/50);
   for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
@@ -763,6 +846,38 @@ function drawPerson(p, opts){
     ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(0,34,7,0,7); ctx.fill(); ctx.restore();
   }
 
+  // apron — worn by whoever's on dish duty
+  if(o.apron){
+    const ap = "#fff6ea", trim = "#ff8fa3";
+    if(front){
+      ctx.fillStyle=ap;
+      roundRect(-16,-78+bob,32,26,6,true,false);        // bib
+      roundRect(-22,-54+bob,44,30,6,true,false);        // skirt
+      ctx.strokeStyle=trim; ctx.lineWidth=3;            // neck strap
+      ctx.beginPath(); ctx.moveTo(-14,-78+bob); ctx.lineTo(-9,-88+bob);
+      ctx.moveTo(14,-78+bob); ctx.lineTo(9,-88+bob); ctx.stroke();
+      ctx.fillStyle=trim; ctx.fillRect(-23,-56+bob,46,5);   // waistband
+      ctx.strokeStyle="rgba(255,143,163,.5)"; ctx.lineWidth=2;   // gingham check
+      for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.moveTo(i*11,-76+bob); ctx.lineTo(i*11,-26+bob); ctx.stroke(); }
+      ctx.beginPath(); ctx.moveTo(-21,-66+bob); ctx.lineTo(21,-66+bob);
+      ctx.moveTo(-21,-40+bob); ctx.lineTo(21,-40+bob); ctx.stroke();
+      ctx.fillStyle="rgba(255,143,163,.35)"; roundRect(-11,-48+bob,22,14,4,true,false); // pocket
+    } else {
+      ctx.strokeStyle=trim; ctx.lineWidth=4;            // straps crossing the back
+      ctx.beginPath();
+      ctx.moveTo(-13,-84+bob); ctx.lineTo(9,-58+bob);
+      ctx.moveTo(13,-84+bob); ctx.lineTo(-9,-58+bob); ctx.stroke();
+      ctx.fillStyle=trim; ctx.fillRect(-22,-58+bob,44,6); // waist tie
+      ctx.beginPath();                                   // bow
+      ctx.ellipse(-8,-54+bob,8,5,0.5,0,7);
+      ctx.ellipse( 8,-54+bob,8,5,-0.5,0,7); ctx.fill();
+      ctx.beginPath(); ctx.arc(0,-54+bob,3.4,0,7); ctx.fill();
+      ctx.strokeStyle=trim; ctx.lineWidth=3;             // dangling ends
+      ctx.beginPath(); ctx.moveTo(-4,-50+bob); ctx.quadraticCurveTo(-10,-40+bob,-6,-32+bob);
+      ctx.moveTo(4,-50+bob); ctx.quadraticCurveTo(10,-40+bob,7,-33+bob); ctx.stroke();
+    }
+  }
+
   // pegs clipped to the back / front of the top
   for(const pg of p.pegsOn){
     const px = front ? -pg.ox : pg.ox;
@@ -868,13 +983,13 @@ function drawPerson(p, opts){
     ctx.fillStyle="#ff6b35"; ctx.font="bold 22px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillText("?",0,1); ctx.restore();
   }
-  if(o.eyeing){
+  if(o.eyeing && !PORTRAIT){     // on a phone this is a full-width strip instead
     ctx.save(); ctx.translate(0,-150+bob);
     ctx.fillStyle="rgba(255,90,90,.9)"; ctx.font="bold 17px Arial"; ctx.textAlign="center";
     ctx.fillText("👀 LOOKING!",0,0); ctx.restore();
   }
   if(p.squeal>0){
-    const s = Math.min(1, p.squeal*1.6);
+    const s = Math.min(1, p.squeal*1.6) * (PORTRAIT ? 1.45 : 1);
     ctx.save(); ctx.translate(38,-128+bob); ctx.scale(s,s);
     ctx.fillStyle="#fff"; ctx.strokeStyle="#e63946"; ctx.lineWidth=3;
     roundRect(-34,-24,68,40,12,true,true);
@@ -896,60 +1011,86 @@ function drawPerson(p, opts){
 /* ----- hud ----- */
 function drawHUD(){
   ctx.save();
-  const pad = PORTRAIT ? 10 : 18;
-  const bw = Math.min(300, (W - pad*2 - 76) / 2);
-  ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(pad,12,bw,54,16,true,false);
-  ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(W-pad-bw,12,bw,54,16,true,false);
-  drawScore(pad+12,      24, bw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla);
-  drawScore(W-pad-bw+12, 24, bw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty);
-  // round / match-wins strip
-  ctx.textAlign="center"; ctx.textBaseline="top";
-  ctx.fillStyle="rgba(255,255,255,.85)";
-  const rw = PORTRAIT ? 180 : 220;
-  roundRect(W/2-rw/2, 12, rw, 26, 13, true, false);
-  ctx.fillStyle="#8a5a2a"; ctx.font="bold 14px Comic Sans MS, Arial";
-  ctx.fillText(roundName() + "  •  rounds " + wins.Cushla + "–" + wins.Shonty, W/2, 17);
-  // pause button
+  if(PORTRAIT){
+    // --- phone: its own band at the top, two rows, nothing overlapping ---
+    ctx.fillStyle="rgba(255,255,255,.94)";
+    ctx.fillRect(0, 0, W, HUD_H);
+    ctx.fillStyle="rgba(0,0,0,.07)"; ctx.fillRect(0, HUD_H-2, W, 2);
+
+    const top = SAFE_TOP + 6*SC;
+    // row 1: round + rounds won, with the pause button on the right
+    const b = pauseBtn();
+    ctx.textAlign="left"; ctx.textBaseline="middle";
+    ctx.fillStyle="#8a5a2a"; ctx.font=fnt(13, true);
+    ctx.fillText(roundName(), 12*SC, top + 13*SC);
+    ctx.textAlign="right";
+    ctx.fillText("rounds  " + wins.Cushla + "–" + wins.Shonty, b.x - b.r - 10*SC, top + 13*SC);
+
+    // row 2: the two scoreboards side by side
+    const gap = 8*SC, cw = (W - 20*SC - gap)/2, ry = top + 28*SC;
+    ctx.fillStyle="rgba(230,57,70,.10)";  roundRect(10*SC, ry, cw, 50*SC, 12*SC, true, false);
+    ctx.fillStyle="rgba(47,168,160,.10)"; roundRect(10*SC+cw+gap, ry, cw, 50*SC, 12*SC, true, false);
+    drawScore(10*SC,          ry, cw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla);
+    drawScore(10*SC+cw+gap,   ry, cw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty);
+  } else {
+    const pad = 18, bw = Math.min(300, (W - pad*2 - 76) / 2);
+    ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(pad,12,bw,54,16,true,false);
+    ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(W-pad-bw,12,bw,54,16,true,false);
+    drawScore(pad,        12, bw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla);
+    drawScore(W-pad-bw,   12, bw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty);
+    ctx.textAlign="center"; ctx.textBaseline="top";
+    ctx.fillStyle="rgba(255,255,255,.85)";
+    roundRect(W/2-110, 12, 220, 26, 13, true, false);
+    ctx.fillStyle="#8a5a2a"; ctx.font="bold 14px Comic Sans MS, Arial";
+    ctx.fillText(roundName() + "  •  rounds " + wins.Cushla + "–" + wins.Shonty, W/2, 17);
+  }
+  // pause button (both layouts)
   const b = pauseBtn();
-  ctx.fillStyle="rgba(255,255,255,.9)"; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,.95)"; ctx.strokeStyle="rgba(0,0,0,.10)"; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill(); ctx.stroke();
   ctx.fillStyle="#4d96ff";
   if(paused){ ctx.beginPath(); ctx.moveTo(b.x-b.r*0.3,b.y-b.r*0.42); ctx.lineTo(b.x+b.r*0.46,b.y); ctx.lineTo(b.x-b.r*0.3,b.y+b.r*0.42); ctx.closePath(); ctx.fill(); }
   else { ctx.fillRect(b.x-b.r*0.36,b.y-b.r*0.44,b.r*0.26,b.r*0.88); ctx.fillRect(b.x+b.r*0.10,b.y-b.r*0.44,b.r*0.26,b.r*0.88); }
   ctx.restore();
 }
 function drawScore(x,y,bw,name,col,n,active){
-  const small = bw < 250;
-  ctx.fillStyle=col; ctx.font="bold "+(small?16:20)+"px Comic Sans MS, Arial";
-  ctx.textAlign="left"; ctx.textBaseline="top";
-  ctx.fillText(name, x, y+2);
-  const dr = small ? 8 : 10, gap = small ? 22 : 30, x0 = x + (small ? 76 : 108);
-  for(let i=0;i<TARGET;i++){
-    const cx=x0+i*gap, cy=y+14;
-    ctx.beginPath(); ctx.arc(cx,cy,dr,0,7);
-    ctx.fillStyle = i<n ? col : "rgba(0,0,0,.10)"; ctx.fill();
-    if(i<n){ ctx.fillStyle="rgba(255,255,255,.6)"; ctx.beginPath(); ctx.arc(cx-3,cy-3,2.6,0,7); ctx.fill(); }
-  }
+  ctx.save();
+  ctx.textAlign="left"; ctx.textBaseline="middle";
+  const px = x + (PORTRAIT ? 10*SC : 12);
+  ctx.fillStyle=col; ctx.font = PORTRAIT ? fnt(15, true) : "bold 20px Comic Sans MS, Arial";
+  ctx.fillText(name, px, y + (PORTRAIT ? 16*SC : 24));
   if(active){
-    ctx.fillStyle=col; ctx.font="bold "+(small?11:12)+"px Arial";
-    ctx.fillText("▶ sneaking", x, y+(small?24:26));
+    ctx.font = PORTRAIT ? fnt(10, true) : "bold 12px Arial";
+    ctx.fillText("▶ sneaking", px, y + (PORTRAIT ? 39*SC : 44));
   }
+  // peg dots, right-aligned inside the card so long names never collide
+  const dr = PORTRAIT ? 7*SC : 10, gap = PORTRAIT ? 18*SC : 30;
+  const x1 = x + bw - (PORTRAIT ? 10*SC : 12) - dr;
+  for(let i=0;i<TARGET;i++){
+    const cx = x1 - (TARGET-1-i)*gap, cy = y + (PORTRAIT ? 26*SC : 26);
+    ctx.beginPath(); ctx.arc(cx,cy,dr,0,7);
+    ctx.fillStyle = i<n ? col : "rgba(0,0,0,.12)"; ctx.fill();
+    if(i<n){ ctx.fillStyle="rgba(255,255,255,.65)"; ctx.beginPath(); ctx.arc(cx-dr*0.3,cy-dr*0.3,dr*0.3,0,7); ctx.fill(); }
+  }
+  ctx.restore();
 }
 
 function banner(title, subtitle, col){
   ctx.save();
   ctx.fillStyle="rgba(0,0,0,.28)"; ctx.fillRect(0,0,W,H);
-  const bw=Math.min(640, W-40), bh=PORTRAIT?208:176, bx=(W-bw)/2, by=(H-bh)/2-10;
+  const bw=Math.min(640, W-28), bh=PORTRAIT?Math.round(250*TS/1.34):176;
+  const bx=(W-bw)/2, by=(H-bh)/2-10;
   ctx.fillStyle="#fff"; ctx.strokeStyle=col; ctx.lineWidth=7;
   roundRect(bx,by,bw,bh,26,true,true);
   ctx.textAlign="center";
-  ctx.fillStyle=col; ctx.font="bold "+(PORTRAIT?30:40)+"px Comic Sans MS, Arial";
-  wrapText(title, W/2, by+(PORTRAIT?54:66), bw-50, 34);
-  ctx.fillStyle="#7a5a3a"; ctx.font=(PORTRAIT?16:18)+"px Comic Sans MS, Arial";
-  wrapText(subtitle, W/2, by+(PORTRAIT?106:104), bw-60, 24);
+  ctx.fillStyle=col; ctx.font = PORTRAIT ? fnt(23, true) : "bold 40px Comic Sans MS, Arial";
+  wrapText(title, W/2, by+(PORTRAIT?48*TS/1.34:66), bw-40, PORTRAIT?30*TS/1.34:34);
+  ctx.fillStyle="#7a5a3a"; ctx.font = PORTRAIT ? fnt(14) : "18px Comic Sans MS, Arial";
+  wrapText(subtitle, W/2, by+(PORTRAIT?112*TS/1.34:104), bw-44, PORTRAIT?24*TS/1.34:24);
   if(readyWait){
     ctx.fillStyle = (Math.sin(T*5)>0) ? col : "#ff8b3d";
-    ctx.font="bold "+(PORTRAIT?19:21)+"px Comic Sans MS, Arial";
-    ctx.fillText(TOUCH?"tap when you're ready!":"press ENTER when you're ready!", W/2, by+bh-22);
+    ctx.font = PORTRAIT ? fnt(15, true) : "bold 21px Comic Sans MS, Arial";
+    ctx.fillText(TOUCH?"tap when you're ready!":"press ENTER when you're ready!", W/2, by+bh-20);
   }
   ctx.restore();
 }
@@ -1049,6 +1190,26 @@ function drawPegBox(t){
   ctx.restore();
 }
 
+/* big, unmissable state banner across the top of the room (phones) */
+function drawStatusStrip(){
+  if(!PORTRAIT || scene!=="play") return;
+  let text, col;
+  if(isWatching()){ text = "👀  HE'S LOOKING — FREEZE!"; col = "#e63946"; }
+  else if(LOOK.warn || LOOK.mode==="turnF"){ text = "❓  he's about to turn…"; col = "#ff8b3d"; }
+  else if(!sneaker.hasPeg){ text = "🧺  out of pegs — back to the basket"; col = "#c9772a"; }
+  else return;
+  if(isWatching() && washer !== shonty) text = "👀  SHE'S LOOKING — FREEZE!";
+  const h = 34*SC, y = HUD_H + 6*SC;
+  ctx.save();
+  ctx.globalAlpha = 0.94;
+  ctx.fillStyle = col; roundRect(8*SC, y, W-16*SC, h, 12*SC, true, false);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle="#fff"; ctx.font=fnt(15, true);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(text, W/2, y + h/2 + 1);
+  ctx.restore();
+}
+
 function drawStick(){
   if(!stick.on) return;
   ctx.save();
@@ -1063,27 +1224,35 @@ function drawStick(){
   ctx.restore();
 }
 
+// shared by the pause menu and its tap targets, so they can never drift apart
+const PAUSE_ROW_H = PORTRAIT ? Math.round(42*SC) : 30;
+const PAUSE_TOP   = PORTRAIT ? Math.round(70*TS/1.34) : 92;
 function drawPause(){
   ctx.save();
   ctx.fillStyle="rgba(30,20,50,.45)"; ctx.fillRect(0,0,W,H);
-  const bw=Math.min(420, W-60), bh=252, bx=(W-bw)/2, by=(H-bh)/2;
+  const RH = PAUSE_ROW_H, bw=Math.min(420, W-40), bh=PAUSE_TOP+RH*5+40;
+  const bx=(W-bw)/2, by=(H-bh)/2;
   ctx.fillStyle="#fff"; ctx.strokeStyle="#4d96ff"; ctx.lineWidth=7;
   roundRect(bx,by,bw,bh,26,true,true);
   ctx.textAlign="center";
-  ctx.fillStyle="#4d96ff"; ctx.font="bold 36px Comic Sans MS, Arial";
-  ctx.fillText("⏸  Paused", W/2, by+52);
+  ctx.fillStyle="#4d96ff"; ctx.font = PORTRAIT ? fnt(24, true) : "bold 36px Comic Sans MS, Arial";
+  ctx.fillText("⏸  Paused", W/2, by+(PORTRAIT?44:52));
   const rows = TOUCH
     ? [["▶","keep playing"],["↺","restart the match"],["♪","music "+(MUS.on?"off":"on")],["🔈","sound "+(muted?"on":"off")],["✕","back to the title"]]
     : [["P / ESC","keep playing"],["R","restart the match"],["N","music on / off"],["M","mute everything"],["Q","back to the title"]];
   rows.forEach((r,i)=>{
-    const y = by+92+i*30;
-    if(TOUCH){ ctx.fillStyle="rgba(77,150,255,.10)"; roundRect(bx+16,y,bw-32,28,10,true,false); }
-    ctx.textAlign="left";
-    ctx.fillStyle="#e63946"; ctx.font="bold 17px Comic Sans MS, Arial"; ctx.fillText(r[0], bx+36, y+20);
-    ctx.fillStyle="#7a5a3a"; ctx.font="16px Comic Sans MS, Arial"; ctx.fillText(r[1], bx+(TOUCH?92:150), y+20);
+    const y = by+PAUSE_TOP+i*RH;
+    if(TOUCH){ ctx.fillStyle="rgba(77,150,255,.10)"; roundRect(bx+14,y,bw-28,RH-4,10,true,false); }
+    ctx.textAlign="left"; ctx.textBaseline="middle";
+    ctx.fillStyle="#e63946"; ctx.font = PORTRAIT ? fnt(15, true) : "bold 17px Comic Sans MS, Arial";
+    ctx.fillText(r[0], bx+30, y+(RH-4)/2);
+    ctx.fillStyle="#7a5a3a"; ctx.font = PORTRAIT ? fnt(14) : "16px Comic Sans MS, Arial";
+    ctx.fillText(r[1], bx+(TOUCH?78:150), y+(RH-4)/2);
+    ctx.textBaseline="alphabetic";
   });
   if(TOUCH){
-    ctx.textAlign="center"; ctx.fillStyle="#a08a70"; ctx.font="13px Comic Sans MS, Arial";
+    ctx.textAlign="center"; ctx.fillStyle="#a08a70";
+    ctx.font = PORTRAIT ? fnt(11) : "13px Comic Sans MS, Arial";
     ctx.fillText("tap a row, or anywhere else to resume", W/2, by+bh-14);
   }
   ctx.restore();
@@ -1092,9 +1261,9 @@ function drawPause(){
 function drawSnapFx(){
   if(snapFx<=0) return;
   const grow = Math.min(1, (1-snapFx)*5);
-  const s = grow * (1 + Math.sin(snapFx*30)*0.05) * Math.min(1, snapFx*3.2);
+  const s = grow * (1 + Math.sin(snapFx*30)*0.05) * Math.min(1, snapFx*3.2) * (PORTRAIT?1.3:1);
   ctx.save();
-  ctx.translate(sneaker.x - 66, sneaker.y - 132);
+  ctx.translate(sneaker.x - 60*(PORTRAIT?1.1:1), sneaker.y - 132);
   ctx.rotate(-0.22 + Math.sin(snapFx*24)*0.05);
   ctx.scale(s,s);
   ctx.fillStyle="#ffd93d"; ctx.strokeStyle="#e63946"; ctx.lineWidth=5; ctx.lineJoin="round";
@@ -1112,17 +1281,42 @@ function drawSnapFx(){
 }
 
 /* ---------- title ---------- */
+const TITLE_LINES = TOUCH ? [
+  "🧺  Someone's at the sink doing dishes.",
+  "👆  Swipe & hold to creep up behind them.",
+  "✋  Let go to freeze the second they turn,",
+  "      or hide in a shaded pocket.",
+  "🎨  Tap right behind them to peg them. +1!",
+  "😖  Caught? SNAP — and a peg falls off.",
+  "🧺  Back to the basket for each new peg.",
+  "🏆  First to 5 wins. Best of two rounds."
+] : [
+  "🧺  Shonty is doing the dishes. Sneak up behind him…",
+  "🎨  …and SPACE to clip a colourful peg on his back. +1 point!",
+  "👀  He looks around a lot. When he does: STOP MOVING, or hide",
+  "      in the shady pocket behind the table, plant, chair or basket.",
+  "😖  Caught? He twangs your undies — SNAP! — and a peg pings off!",
+  "🧺  Out of pegs? Sneak all the way back to the basket for another.",
+  "🏆  First to " + TARGET + " takes the round. You play two rounds so each",
+  "      of you gets to sneak first — then a Golden Peg decider if it's 1–1."
+];
+// the card is sized from its contents so it can never overflow a small screen
 function titleCard(){
-  const bw = Math.min(680, W-52), bh = PORTRAIT ? 530 : 486;
-  return {bw, bh, bx:(W-bw)/2, by:(PORTRAIT ? H*0.17 : 56)};
+  const bw = Math.min(680, W-24);
+  const lh = PORTRAIT ? Math.round(21*TS) : 27;
+  const head = PORTRAIT ? Math.round(96*TS/1.34) : 130;
+  const foot = PORTRAIT ? Math.round(112*TS/1.34) : 116;
+  const bh = head + TITLE_LINES.length*lh + foot;
+  return {bw, bh, lh, head, bx:(W-bw)/2, by: Math.max(8, (H-bh)/2 - (PORTRAIT?10:20))};
 }
 function musicBtn(){
-  const c = titleCard(), w = 148, h = 32;
-  return {x: c.bx + c.bw - w - 18, y: c.by + 16, w, h};
+  const c = titleCard(), w = PORTRAIT ? Math.round(120*TS/1.34) : 148, h = PORTRAIT ? 34 : 32;
+  return {x: c.bx + c.bw - w - 14, y: c.by + 12, w, h};
 }
 function titleBtns(){
-  const c = titleCard(), y = c.by + c.bh - 88;
-  const gap = 16, bw = Math.min(280, (c.bw - 60 - gap)/2), h = 56;
+  const c = titleCard();
+  const h = PORTRAIT ? 62 : 56, y = c.by + c.bh - h - (PORTRAIT ? 42 : 32);
+  const gap = 14, bw = Math.min(280, (c.bw - 36 - gap)/2);
   const x0 = c.bx + (c.bw - (bw*2+gap))/2;
   return [
     {x:x0,          y, w:bw, h, label:"1 PLAYER",  sub:"you vs Shonty",     mode:"solo"},
@@ -1137,34 +1331,14 @@ function drawTitle(t){
   const bw = c.bw, bh = c.bh, bx = c.bx, by = c.by;
   ctx.fillStyle="#fff"; ctx.strokeStyle="#e63946"; ctx.lineWidth=8;
   roundRect(bx,by,bw,bh,32,true,true);
-  ctx.fillStyle="#e63946"; ctx.font="bold "+(PORTRAIT?42:54)+"px Comic Sans MS, Arial";
-  ctx.fillText("Cushla Mushla", W/2, by+(PORTRAIT?70:78));
-  ctx.fillStyle="#2fa8a0"; ctx.font="bold "+(PORTRAIT?18:22)+"px Comic Sans MS, Arial";
-  ctx.fillText("…the great kitchen peg caper!", W/2, by+(PORTRAIT?102:114));
+  ctx.fillStyle="#e63946"; ctx.font = PORTRAIT ? fnt(30, true) : "bold 54px Comic Sans MS, Arial";
+  ctx.fillText("Cushla Mushla", W/2, by+(PORTRAIT?52*TS/1.34:78));
+  ctx.fillStyle="#2fa8a0"; ctx.font = PORTRAIT ? fnt(13, true) : "bold 22px Comic Sans MS, Arial";
+  ctx.fillText("…the great kitchen peg caper!", W/2, by+(PORTRAIT?78*TS/1.34:114));
 
-  const lines = TOUCH ? [
-    "🧺  Shonty is doing the dishes. Sneak up behind him…",
-    "👆  SWIPE and HOLD to creep — the further you drag,",
-    "      the faster she goes. LET GO and she freezes.",
-    "👀  When he spins round: let go, or hide in a shady",
-    "      pocket behind the table, plant, chair or basket.",
-    "🎨  TAP when you're right behind him to clip a peg on. +1!",
-    "😖  Caught? SNAP go the undies — and a peg pings off!",
-    "🧺  Out of pegs? Sneak back to the basket for another.",
-    "🏆  First to " + TARGET + " takes the round. Best of two rounds!"
-  ] : [
-    "🧺  Shonty is doing the dishes. Sneak up behind him…",
-    "🎨  …and SPACE to clip a colourful peg on his back. +1 point!",
-    "👀  He looks around a lot. When he does: STOP MOVING, or hide",
-    "      in the shady pocket behind the table, plant, chair or basket.",
-    "😖  Caught? He twangs your undies — SNAP! — and a peg pings off!",
-    "🧺  Out of pegs? Sneak all the way back to the basket for another.",
-    "🏆  First to " + TARGET + " takes the round. You play two rounds so each",
-    "      of you gets to sneak first — then a Golden Peg decider if it's 1–1."
-  ];
-  ctx.fillStyle="#7a5a3a"; ctx.font=(PORTRAIT?15:17)+"px Comic Sans MS, Arial"; ctx.textAlign="left";
-  const lh = PORTRAIT ? 25 : 27;
-  lines.forEach((l,i)=> ctx.fillText(l, bx+(PORTRAIT?20:44), by+(PORTRAIT?142:160)+i*lh));
+  ctx.fillStyle="#7a5a3a"; ctx.font = PORTRAIT ? fnt(12) : "17px Comic Sans MS, Arial";
+  ctx.textAlign="left";
+  TITLE_LINES.forEach((l,i)=> ctx.fillText(l, bx+(PORTRAIT?14:44), by+c.head+i*c.lh));
 
   // music toggle — off by default, so make it easy to find
   const mb = musicBtn();
@@ -1172,8 +1346,8 @@ function drawTitle(t){
   roundRect(mb.x, mb.y, mb.w, mb.h, 16, true, false);
   ctx.textAlign="center"; ctx.textBaseline="middle";
   ctx.fillStyle = MUS.on ? "#fff" : "#9b8a76";
-  ctx.font="bold 14px Comic Sans MS, Arial";
-  ctx.fillText((MUS.on ? "♪  Music on" : "♪  Music off"), mb.x+mb.w/2, mb.y+mb.h/2+1);
+  ctx.font = PORTRAIT ? fnt(11, true) : "bold 14px Comic Sans MS, Arial";
+  ctx.fillText((MUS.on ? "♪ Music on" : "♪ Music off"), mb.x+mb.w/2, mb.y+mb.h/2+1);
   ctx.textBaseline="alphabetic";
 
   // mode buttons
@@ -1182,12 +1356,13 @@ function drawTitle(t){
     ctx.fillStyle = i===0 ? "#e63946" : "#2fa8a0";
     roundRect(b.x,b.y,b.w,b.h,16,true,false);
     ctx.fillStyle="rgba(255,255,255,.25)"; roundRect(b.x+4,b.y+4,b.w-8,b.h*0.42,12,true,false);
-    ctx.fillStyle="#fff"; ctx.font="bold 20px Comic Sans MS, Arial";
-    ctx.fillText(b.label, b.x+b.w/2, b.y+b.h/2+1);
-    ctx.font="12px Comic Sans MS, Arial"; ctx.fillStyle="rgba(255,255,255,.85)";
-    ctx.fillText(b.sub, b.x+b.w/2, b.y+b.h-9);
+    ctx.fillStyle="#fff"; ctx.font = PORTRAIT ? fnt(15, true) : "bold 20px Comic Sans MS, Arial";
+    ctx.fillText(b.label, b.x+b.w/2, b.y+b.h*0.44);
+    ctx.font = PORTRAIT ? fnt(10) : "12px Comic Sans MS, Arial";
+    ctx.fillStyle="rgba(255,255,255,.85)";
+    ctx.fillText(b.sub, b.x+b.w/2, b.y+b.h-10);
   });
-  ctx.fillStyle="#a08a70"; ctx.font=(PORTRAIT?12:13)+"px Comic Sans MS, Arial";
+  ctx.fillStyle="#a08a70"; ctx.font = PORTRAIT ? fnt(10) : "13px Comic Sans MS, Arial";
   ctx.fillText(TOUCH ? "⏸ top-right to pause, restart or mute"
                      : "1 / 2 or ENTER to start  •  P pause  •  R restart  •  N music  •  M mute",
                W/2, by+bh-14);
@@ -1223,6 +1398,8 @@ function frame(now){
   updateFx(dt);
 
   // ---- render ----
+  ctx.setTransform(RS,0,0,RS,0,0);            // logical px -> real screen px
+  ctx.clearRect(0,0,W,H);
   ctx.save();
   if(shake>0){ const s=shake*14; ctx.translate((Math.random()-.5)*s,(Math.random()-.5)*s); }
   drawRoom(T);
@@ -1238,6 +1415,7 @@ function frame(now){
     // depth sort: washer is always at the sink (top), sneaker + furniture sort by y
     const items = [];
     items.push({y: washer.y, d:()=>drawPerson(washer,{
+      apron: true,
       scrub: LOOK.mode==="wash",
       warn: LOOK.warn || LOOK.mode==="turnF",
       eyeing: LOOK.mode==="look",
@@ -1259,25 +1437,26 @@ function frame(now){
         ctx.fillStyle="rgba(0,0,0,.22)"; ctx.fillRect(-5,-2,10,3);
         ctx.restore();
       }
-      if(scene==="play" && !sneaker.hasPeg){
+      if(scene==="play" && !sneaker.hasPeg && !PORTRAIT){
         ctx.fillStyle="#c9772a"; ctx.font="bold 15px Comic Sans MS, Arial"; ctx.textAlign="center";
         ctx.fillText("out of pegs — back to the basket!", sneaker.x, sneaker.y-150);
       }
       if(scene==="play"){
-        if(sneaker.hidden){
-          ctx.fillStyle="#2f9e56"; ctx.font="bold 15px Comic Sans MS, Arial"; ctx.textAlign="center";
-          ctx.fillText("hidden!", sneaker.x, sneaker.y-128);
-        } else if(isWatching() ){
-          ctx.fillStyle = sneaker.moving ? "#e63946" : "#2f9e56";
-          ctx.font="bold 15px Comic Sans MS, Arial"; ctx.textAlign="center";
-          ctx.fillText(sneaker.moving ? "MOVING!" : "frozen…", sneaker.x, sneaker.y-128);
-        }
+        const label = (txt, col, dy) => {
+          ctx.font = fnt(15, true); ctx.textAlign="center"; ctx.textBaseline="middle";
+          const w = ctx.measureText(txt).width + 18*TS, h = 24*TS;
+          ctx.fillStyle="rgba(255,255,255,.86)";
+          roundRect(sneaker.x-w/2, sneaker.y+dy-h/2, w, h, h/2, true, false);
+          ctx.fillStyle=col; ctx.fillText(txt, sneaker.x, sneaker.y+dy+1);
+          ctx.textBaseline="alphabetic";
+        };
+        if(sneaker.hidden) label("hidden!", "#2f9e56", -132);
+        else if(isWatching()) label(sneaker.moving ? "MOVING!" : "frozen…",
+                                    sneaker.moving ? "#e63946" : "#2f9e56", -132);
         if(inPegRange() && !isWatching() && humanTurn()){
-          const a = 0.6+Math.sin(T*10)*0.4;
-          ctx.globalAlpha=a; ctx.fillStyle="#ffb703";
-          ctx.font="bold "+(TOUCH?19:17)+"px Comic Sans MS, Arial"; ctx.textAlign="center";
-          ctx.fillText(TOUCH ? "TAP — peg him!" : "SPACE — peg him!", sneaker.x, sneaker.y-150);
-          ctx.globalAlpha=1;
+          ctx.globalAlpha = 0.65+Math.sin(T*10)*0.35;
+          label(TOUCH ? "TAP — peg them!" : "SPACE — peg them!", "#d68300", -160);
+          ctx.globalAlpha = 1;
         }
       }
     }});
@@ -1301,13 +1480,19 @@ function frame(now){
     if(scene==="roundwin") banner(msg, sub, "#2f9e56");
     if(scene==="gamewin")  banner(msg, sub, "#2f9e56");
     if(scene==="over")     banner(msg, sub, "#ffb703");
+    drawStatusStrip();
     if(scene==="play" && humanTurn()) drawStick();
     if(!TOUCH){
       ctx.fillStyle="rgba(90,50,20,.5)"; ctx.font="13px Arial"; ctx.textAlign="right";
       ctx.fillText((muted?"muted • ":"") + (MUS.on?"":"music off • ") + "P pause • R restart", W-20, H-14);
     } else if(scene==="play" && humanTurn() && !stick.on){
-      ctx.fillStyle="rgba(90,50,20,.45)"; ctx.font="15px Comic Sans MS, Arial"; ctx.textAlign="center";
-      ctx.fillText("swipe & hold to sneak  •  let go to freeze", W/2, H-16);
+      const txt = "swipe & hold to sneak  •  let go to freeze";
+      ctx.font = fnt(14, true); ctx.textAlign="center"; ctx.textBaseline="middle";
+      const w = ctx.measureText(txt).width + 26*TS, h = 30*TS, y = H - h/2 - 10*SC;
+      ctx.fillStyle="rgba(255,255,255,.82)";
+      roundRect(W/2-w/2, y-h/2, w, h, h/2, true, false);
+      ctx.fillStyle="#8a5a2a"; ctx.fillText(txt, W/2, y+1);
+      ctx.textBaseline="alphabetic";
     }
     if(paused) drawPause();
   }
