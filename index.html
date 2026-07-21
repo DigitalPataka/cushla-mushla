@@ -282,13 +282,14 @@ cv.addEventListener("contextmenu", e=>e.preventDefault());
 
 function handlePauseTap(p){
   const RH = PAUSE_ROW_H, bw = Math.min(420, W-40);
-  const bh = PAUSE_TOP+RH*5+40, bx = (W-bw)/2, by = (H-bh)/2;
-  for(let i=0;i<5;i++){
+  const bh = PAUSE_TOP+RH*6+40, bx = (W-bw)/2, by = (H-bh)/2;
+  for(let i=0;i<6;i++){
     if(p.y > by+PAUSE_TOP+i*RH && p.y < by+PAUSE_TOP+(i+1)*RH && p.x>bx && p.x<bx+bw){
-      const act = ["resume","restart","music","mute","quit"][i];
+      const act = ["resume","restart","fancy","music","mute","quit"][i];
       S.ui();
       if(act==="resume") paused = false;
       else if(act==="restart"){ paused=false; confetti=[]; sparks=[]; hearts=[]; startGame(); }
+      else if(act==="fancy") FANCY = !FANCY;
       else if(act==="music") MUS.on = !MUS.on;
       else if(act==="mute") muted = !muted;
       else if(act==="quit"){ paused=false; confetti=[]; scene="title"; sceneT=0; }
@@ -454,6 +455,7 @@ let msg = "", sub = "";
 let bubbles = [], sparks = [], confetti = [], hearts = [];
 let shake = 0, flash = 0, snapFx = 0;
 let paused = false;
+let FANCY = true;        // the visual pass — toggle with V, or from the pause menu
 let aiThink = 0, aiSkill = 0.5, aiPause = 0;
 // How long Shonty keeps moving after you spin round — your window to catch him.
 // Deliberately generous: without it he'd freeze instantly and be uncatchable.
@@ -574,6 +576,7 @@ function onKey(k){
     return;
   }
   if(k==="n"){ MUS.on = !MUS.on; S.ui(); return; }
+  if(k==="v"){ FANCY = !FANCY; S.ui(); return; }
   if(k==="r"){                       // restart the whole match
     if(scene!=="title"){ paused=false; confetti=[]; sparks=[]; hearts=[]; S.ui(); startGame(); }
     return;
@@ -951,27 +954,92 @@ function drawRoom(t){
   const cTop = FLOOR_TOP - 58;              // counter top
   // wall
   const g = ctx.createLinearGradient(0,0,0,FLOOR_TOP);
-  g.addColorStop(0,"#bfe9ff"); g.addColorStop(1,"#8fd6f5");
+  if(FANCY){ g.addColorStop(0,"#d8f2ff"); g.addColorStop(0.6,"#a9e0f7"); g.addColorStop(1,"#8ccbe8"); }
+  else { g.addColorStop(0,"#bfe9ff"); g.addColorStop(1,"#8fd6f5"); }
   ctx.fillStyle=g; ctx.fillRect(0,0,W,FLOOR_TOP);
+  if(FANCY){
+    // wallpaper stripes, and a tiled splashback above the counter
+    ctx.fillStyle="rgba(255,255,255,.16)";
+    for(let x=0; x<W; x+=34) ctx.fillRect(x, 0, 16, cTop);
+    const tileTop = Math.max(0, cTop-46);
+    ctx.fillStyle="rgba(255,255,255,.55)"; ctx.fillRect(0,tileTop,W,46);
+    ctx.strokeStyle="rgba(140,180,200,.45)"; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=23){ ctx.moveTo(x,tileTop); ctx.lineTo(x,cTop); }
+    ctx.moveTo(0,tileTop+23); ctx.lineTo(W,tileTop+23);
+    ctx.moveTo(0,tileTop); ctx.lineTo(W,tileTop);
+    ctx.stroke();
+  }
   // window — on a phone it sits below the scoreboard band and status strip,
   // and shrinks to fit rather than growing into the counter
   const wy = PORTRAIT ? HUD_H + 46*SC : 18;
   const ww = Math.min(240, W*0.52), wh = cTop - wy - 10, wx = W/2-ww/2;
   if(wh >= 42){
     ctx.fillStyle="#fff9e6"; roundRect(wx,wy,ww,wh,10,true,false);
-    ctx.fillStyle="#a8e6ff"; roundRect(wx+8,wy+8,ww-16,wh-16,7,true,false);
-    const sunR = Math.min(20, wh*0.24);
-    ctx.fillStyle="#ffe98a"; ctx.beginPath(); ctx.arc(wx+ww*0.29,wy+wh*0.40,sunR,0,7); ctx.fill();
-    ctx.fillStyle="#fff";
-    for(let i=0;i<3;i++){
-      ctx.beginPath();
-      ctx.arc(wx+ww*0.58+i*24, wy+wh*0.46+Math.sin(t*0.6+i)*4, Math.min(15-i*2, wh*0.2), 0, 7);
-      ctx.fill();
+    const gx=wx+8, gy=wy+8, gw=ww-16, gh=wh-16;
+    if(FANCY){
+      // a garden out there: sky, hills, a tree, and the sun
+      ctx.save();
+      ctx.beginPath(); roundRect(gx,gy,gw,gh,7,false,false); ctx.clip();
+      const sky = ctx.createLinearGradient(0,gy,0,gy+gh);
+      sky.addColorStop(0,"#9ad9ff"); sky.addColorStop(0.62,"#cdefff"); sky.addColorStop(0.63,"#8fcf72");
+      sky.addColorStop(1,"#5faa50");
+      ctx.fillStyle=sky; ctx.fillRect(gx,gy,gw,gh);
+      const sunR = Math.min(16, gh*0.2);
+      ctx.fillStyle="rgba(255,246,180,.95)";
+      ctx.beginPath(); ctx.arc(gx+gw*0.24, gy+gh*0.26, sunR, 0, 7); ctx.fill();
+      ctx.fillStyle="rgba(255,246,180,.35)";
+      ctx.beginPath(); ctx.arc(gx+gw*0.24, gy+gh*0.26, sunR*1.7, 0, 7); ctx.fill();
+      ctx.fillStyle="rgba(255,255,255,.85)";
+      for(let i=0;i<3;i++){
+        const cx2 = gx + ((t*7 + i*70) % (gw+50)) - 25;
+        ctx.beginPath(); ctx.arc(cx2, gy+gh*0.22+i*7, 11-i*2, 0, 7);
+        ctx.arc(cx2+12, gy+gh*0.22+i*7, 8-i, 0, 7); ctx.fill();
+      }
+      // a tree, leaning gently in the breeze
+      const tx2 = gx+gw*0.74, ty2 = gy+gh*0.63, sway = Math.sin(t*0.9)*2;
+      ctx.strokeStyle="#8a5a34"; ctx.lineWidth=5; ctx.lineCap="round";
+      ctx.beginPath(); ctx.moveTo(tx2,ty2+14); ctx.quadraticCurveTo(tx2+sway,ty2-4,tx2+sway*1.5,ty2-14); ctx.stroke();
+      ctx.fillStyle="#57a24a";
+      ctx.beginPath(); ctx.arc(tx2+sway*1.5, ty2-22, 15, 0, 7);
+      ctx.arc(tx2+sway*1.5-11, ty2-15, 10, 0, 7); ctx.arc(tx2+sway*1.5+11, ty2-15, 10, 0, 7); ctx.fill();
+      ctx.fillStyle="rgba(255,255,255,.16)"; ctx.fillRect(gx,gy,gw,gh*0.5);   // glass sheen
+      ctx.restore();
+    } else {
+      ctx.fillStyle="#a8e6ff"; roundRect(gx,gy,gw,gh,7,true,false);
+      const sunR = Math.min(20, wh*0.24);
+      ctx.fillStyle="#ffe98a"; ctx.beginPath(); ctx.arc(wx+ww*0.29,wy+wh*0.40,sunR,0,7); ctx.fill();
+      ctx.fillStyle="#fff";
+      for(let i=0;i<3;i++){
+        ctx.beginPath();
+        ctx.arc(wx+ww*0.58+i*24, wy+wh*0.46+Math.sin(t*0.6+i)*4, Math.min(15-i*2, wh*0.2), 0, 7);
+        ctx.fill();
+      }
     }
     ctx.strokeStyle="#fff"; ctx.lineWidth=7;
     ctx.beginPath();
     ctx.moveTo(wx+ww/2,wy+4); ctx.lineTo(wx+ww/2,wy+wh-4);
     ctx.moveTo(wx+4,wy+wh/2); ctx.lineTo(wx+ww-4,wy+wh/2); ctx.stroke();
+    if(FANCY){
+      // gingham curtains tied back either side
+      for(const side of [-1, 1]){
+        const cxx = side<0 ? wx-4 : wx+ww+4;
+        ctx.save(); ctx.translate(cxx, wy-2);
+        ctx.fillStyle="#ffd3dd";
+        ctx.beginPath();
+        ctx.moveTo(0,0);
+        ctx.quadraticCurveTo(side*26, wh*0.30, side*14, wh*0.62);
+        ctx.quadraticCurveTo(side*6, wh*0.85, side*20, wh+2);
+        ctx.lineTo(0, wh+2); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle="rgba(255,255,255,.55)"; ctx.lineWidth=2;
+        for(let i=1;i<4;i++){
+          ctx.beginPath(); ctx.moveTo(side*i*4, 0);
+          ctx.quadraticCurveTo(side*(i*4+16), wh*0.4, side*(i*3+8), wh+2); ctx.stroke();
+        }
+        ctx.restore();
+      }
+      ctx.fillStyle="#e8b0be"; ctx.fillRect(wx-10, wy-8, ww+20, 8);   // curtain rail
+    }
   }
   // bunting (desktop only — on a phone that strip belongs to the scoreboard)
   if(!PORTRAIT){
@@ -985,6 +1053,22 @@ function drawRoom(t){
   // counter + sink
   const sx = washerSinkX();
   ctx.fillStyle="#f3d9b8"; ctx.fillRect(0,cTop,W,58);
+  if(FANCY){
+    // butcher-block worktop: grain, a lit front edge, and cupboards below
+    ctx.strokeStyle="rgba(160,110,60,.16)"; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    for(let i=0;i<9;i++){
+      const yy = cTop + 5 + i*5.5;
+      ctx.moveTo(0,yy);
+      for(let x=0;x<W;x+=44) ctx.quadraticCurveTo(x+22, yy+(i%2?1.6:-1.6), x+44, yy);
+    }
+    ctx.stroke();
+    const cg = ctx.createLinearGradient(0,cTop,0,cTop+58);
+    cg.addColorStop(0,"rgba(255,255,255,.35)"); cg.addColorStop(0.45,"rgba(255,255,255,0)");
+    cg.addColorStop(1,"rgba(120,70,30,.20)");
+    ctx.fillStyle=cg; ctx.fillRect(0,cTop,W,58);
+    ctx.fillStyle="rgba(255,255,255,.45)"; ctx.fillRect(0,cTop,W,3);
+  }
   ctx.fillStyle="#e2bd91"; ctx.fillRect(0,FLOOR_TOP-10,W,10);
   ctx.fillStyle="#cfd8e3"; roundRect(sx-92,cTop+6,184,44,8,true,false);
   ctx.fillStyle="#9fd7f2"; roundRect(sx-84,cTop+12,168,34,6,true,false);
@@ -1028,8 +1112,107 @@ function drawRoom(t){
     ctx.fillRect(c*70, FLOOR_TOP + r*50, 70, 50);
   }
   ctx.fillStyle="rgba(255,255,255,.18)"; ctx.fillRect(0,FLOOR_TOP,W,H-FLOOR_TOP);
+
+  if(FANCY){
+    // grout lines give the tiles some bite
+    ctx.strokeStyle="rgba(150,100,60,.10)"; ctx.lineWidth=1;
+    ctx.beginPath();
+    for(let c=0;c<=cols;c++){ ctx.moveTo(c*70,FLOOR_TOP); ctx.lineTo(c*70,H); }
+    for(let r=0;r<=rows;r++){ ctx.moveTo(0,FLOOR_TOP+r*50); ctx.lineTo(W,FLOOR_TOP+r*50); }
+    ctx.stroke();
+    // polished sheen sliding down the floor
+    const gl = ctx.createLinearGradient(0,FLOOR_TOP,0,H);
+    gl.addColorStop(0,"rgba(255,255,255,.30)");
+    gl.addColorStop(0.35,"rgba(255,255,255,.06)");
+    gl.addColorStop(1,"rgba(120,70,30,.10)");
+    ctx.fillStyle=gl; ctx.fillRect(0,FLOOR_TOP,W,H-FLOOR_TOP);
+    // skirting board where wall meets floor
+    ctx.fillStyle="#f5e2c8"; ctx.fillRect(0,FLOOR_TOP-6,W,7);
+    ctx.fillStyle="rgba(150,100,60,.22)"; ctx.fillRect(0,FLOOR_TOP+1,W,3);
+  }
 }
 function washerSinkX(){ return W/2; }
+
+/* ---------- atmosphere ----------
+   Drawn OVER the scene: a shaft of sun from the window with dust turning in
+   it, steam off the hot water, and a warm vignette to pull it all together. */
+let dust = [], steam = [];
+function seedAtmosphere(){
+  dust = []; steam = [];
+  for(let i=0;i<26;i++) dust.push({
+    x: Math.random()*W, y: FLOOR_TOP + Math.random()*(H-FLOOR_TOP),
+    r: 0.8 + Math.random()*1.9, ph: Math.random()*7, sp: 0.15 + Math.random()*0.5
+  });
+}
+function updateAtmosphere(dt){
+  if(!FANCY) return;
+  for(const d of dust){
+    d.y -= d.sp*10*dt; d.ph += dt*0.7;
+    if(d.y < FLOOR_TOP-10){ d.y = H + 8; d.x = Math.random()*W; }
+  }
+  if(steam.length < 14 && Math.random() < 0.35){
+    steam.push({x: washerSinkX() + (Math.random()-0.5)*120, y: FLOOR_TOP-70,
+                r: 6+Math.random()*10, life: 1, vy: -16-Math.random()*14, vx:(Math.random()-.5)*9});
+  }
+  for(let i=steam.length-1;i>=0;i--){
+    const s2 = steam[i];
+    s2.y += s2.vy*dt; s2.x += s2.vx*dt; s2.r += dt*9; s2.life -= dt*0.42;
+    if(s2.life <= 0) steam.splice(i,1);
+  }
+}
+function drawSunbeam(){
+  if(!FANCY) return;
+  const cTop = FLOOR_TOP - 58;
+  const ww = Math.min(240, W*0.52), wx = W/2-ww/2;
+  const wy = PORTRAIT ? HUD_H + 46*SC : 18;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const g = ctx.createLinearGradient(wx, wy, wx+ww*0.4, H);
+  g.addColorStop(0,"rgba(255,236,170,.30)");
+  g.addColorStop(0.45,"rgba(255,225,150,.13)");
+  g.addColorStop(1,"rgba(255,215,140,0)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(wx+6, wy+8); ctx.lineTo(wx+ww-6, wy+8);
+  ctx.lineTo(wx+ww*1.35, H); ctx.lineTo(wx-ww*0.30, H);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // dust turning in the light
+  ctx.save();
+  for(const d of dust){
+    const inBeam = d.x > wx-ww*0.30 && d.x < wx+ww*1.35;
+    if(!inBeam) continue;
+    ctx.globalAlpha = 0.20 + Math.sin(d.ph)*0.16;
+    ctx.fillStyle = "#fff6d5";
+    ctx.beginPath(); ctx.arc(d.x + Math.sin(d.ph)*5, d.y, d.r, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawSteam(){
+  if(!FANCY) return;
+  ctx.save();
+  for(const s2 of steam){
+    ctx.globalAlpha = Math.max(0, s2.life)*0.30;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(s2.x, s2.y, s2.r, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawGrade(){
+  if(!FANCY) return;
+  ctx.save();
+  // warm afternoon wash
+  ctx.globalCompositeOperation = "overlay";
+  ctx.fillStyle = "rgba(255,190,120,.13)";
+  ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation = "source-over";
+  // vignette, keeping the middle bright
+  const v = ctx.createRadialGradient(W/2, H*0.48, Math.min(W,H)*0.30, W/2, H*0.5, Math.max(W,H)*0.72);
+  v.addColorStop(0,"rgba(60,30,10,0)");
+  v.addColorStop(1,"rgba(60,30,10,.30)");
+  ctx.fillStyle = v; ctx.fillRect(0,0,W,H);
+  ctx.restore();
+}
 
 function drawFurniture(f){
   ctx.save();
@@ -1094,9 +1277,18 @@ function drawPerson(p, opts){
     ctx.rotate(Math.sin(T*9)*0.10*lg - 0.12*lg);
   }
 
-  // shadow
-  ctx.fillStyle="rgba(90,50,20,.20)";
-  ctx.beginPath(); ctx.ellipse(0,4,26,9,0,0,7); ctx.fill();
+  // contact shadow — soft and tight under the feet, not a flat blob
+  if(FANCY){
+    const sg = ctx.createRadialGradient(0,4,2,0,4,30);
+    sg.addColorStop(0,"rgba(80,45,18,.34)");
+    sg.addColorStop(0.55,"rgba(80,45,18,.16)");
+    sg.addColorStop(1,"rgba(80,45,18,0)");
+    ctx.save(); ctx.translate(0,4); ctx.scale(1,0.34);
+    ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(0,0,30,0,7); ctx.fill(); ctx.restore();
+  } else {
+    ctx.fillStyle="rgba(90,50,20,.20)";
+    ctx.beginPath(); ctx.ellipse(0,4,26,9,0,0,7); ctx.fill();
+  }
 
   // legs
   ctx.fillStyle = pants;
@@ -1135,6 +1327,24 @@ function drawPerson(p, opts){
     ctx.save(); ctx.translate(27, armY+4); ctx.rotate(-swing*0.02);
     roundRect(-6,0,13,32,6,true,false);
     ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(0,34,7,0,7); ctx.fill(); ctx.restore();
+  }
+
+  // form shading: light from the window above, shadow gathering low
+  if(FANCY){
+    const bg = ctx.createLinearGradient(0,-92+bob,0,-28+bob);
+    bg.addColorStop(0,"rgba(255,245,220,.30)");
+    bg.addColorStop(0.42,"rgba(255,255,255,0)");
+    bg.addColorStop(1,"rgba(60,30,15,.22)");
+    ctx.fillStyle=bg; roundRect(-24,-86+bob,48,56,14,true,false);
+    // rim light down the window side
+    ctx.strokeStyle="rgba(255,250,225,.55)"; ctx.lineWidth=2.5;
+    ctx.beginPath();
+    ctx.moveTo(-22,-78+bob); ctx.quadraticCurveTo(-25,-56+bob,-22,-34+bob); ctx.stroke();
+    // a couple of cloth folds
+    ctx.strokeStyle="rgba(0,0,0,.10)"; ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(-10,-44+bob); ctx.quadraticCurveTo(0,-38+bob,10,-44+bob);
+    ctx.moveTo(-13,-56+bob); ctx.quadraticCurveTo(-4,-51+bob,4,-56+bob); ctx.stroke();
   }
 
   // apron — worn by whoever's on dish duty (whipped off to deliver a twang)
@@ -1190,8 +1400,15 @@ function drawPerson(p, opts){
   if(front){
     // ears
     ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(-21,hy+2,5,0,7); ctx.arc(21,hy+2,5,0,7); ctx.fill();
-    // eyes — squeezed shut when he's cracking up
-    if(lg > 0.3){
+    // eyes — squeezed shut when he's cracking up, and they blink now and then
+    const blinkPh = (T*0.55 + (isC?0:1.7)) % 1;
+    const blinking = blinkPh > 0.965;
+    if(blinking && lg <= 0.3){
+      ctx.strokeStyle = isC ? "#c9a227" : "#3b2417"; ctx.lineWidth=2.6; ctx.lineCap="round";
+      ctx.beginPath();
+      ctx.moveTo(-13,hy-2); ctx.lineTo(-3,hy-2);
+      ctx.moveTo(3,hy-2); ctx.lineTo(13,hy-2); ctx.stroke();
+    } else if(lg > 0.3){
       ctx.strokeStyle = isC ? "#2f80ed" : "#3b2417"; ctx.lineWidth=2.8; ctx.lineCap="round";
       ctx.beginPath();
       ctx.arc(-8, hy+2, 6, Math.PI*1.15, Math.PI*1.85);
@@ -1613,7 +1830,7 @@ const PAUSE_TOP   = PORTRAIT ? Math.round(70*TS/1.34) : 92;
 function drawPause(){
   ctx.save();
   ctx.fillStyle="rgba(30,20,50,.45)"; ctx.fillRect(0,0,W,H);
-  const RH = PAUSE_ROW_H, bw=Math.min(420, W-40), bh=PAUSE_TOP+RH*5+40;
+  const RH = PAUSE_ROW_H, bw=Math.min(420, W-40), bh=PAUSE_TOP+RH*6+40;
   const bx=(W-bw)/2, by=(H-bh)/2;
   ctx.fillStyle="#fff"; ctx.strokeStyle="#4d96ff"; ctx.lineWidth=7;
   roundRect(bx,by,bw,bh,26,true,true);
@@ -1621,8 +1838,8 @@ function drawPause(){
   ctx.fillStyle="#4d96ff"; ctx.font = PORTRAIT ? fnt(24, true) : "bold 36px Comic Sans MS, Arial";
   ctx.fillText("⏸  Paused", W/2, by+(PORTRAIT?44:52));
   const rows = TOUCH
-    ? [["▶","keep playing"],["↺","restart the match"],["♪","music "+(MUS.on?"off":"on")],["🔈","sound "+(muted?"on":"off")],["✕","back to the title"]]
-    : [["P / ESC","keep playing"],["R","restart the match"],["N","music on / off"],["M","mute everything"],["Q","back to the title"]];
+    ? [["▶","keep playing"],["↺","restart the match"],["✨","fancy visuals "+(FANCY?"off":"on")],["♪","music "+(MUS.on?"off":"on")],["🔈","sound "+(muted?"on":"off")],["✕","back to the title"]]
+    : [["P / ESC","keep playing"],["R","restart the match"],["V","fancy visuals on / off"],["N","music on / off"],["M","mute everything"],["Q","back to the title"]];
   rows.forEach((r,i)=>{
     const y = by+PAUSE_TOP+i*RH;
     if(TOUCH){ ctx.fillStyle="rgba(77,150,255,.10)"; roundRect(bx+14,y,bw-28,RH-4,10,true,false); }
@@ -1807,6 +2024,7 @@ function frame(now){
   else if(scene==="caught"  && sceneT>25) confirm_();
   else if(scene==="roundwin"&& sceneT>25) confirm_();
   updateFx(dt);
+  if(!paused) updateAtmosphere(dt);
 
   // ---- render ----
   ctx.setTransform(RS,0,0,RS,0,0);            // logical px -> real screen px
@@ -1879,7 +2097,10 @@ function frame(now){
 
   drawSnapFx();
   drawFx();
+  drawSteam();
+  drawSunbeam();
   ctx.restore();
+  drawGrade();
 
   if(flash>0){ ctx.fillStyle="rgba(255,255,220,"+(flash*0.7)+")"; ctx.fillRect(0,0,W,H); }
 
@@ -1912,6 +2133,7 @@ function frame(now){
 
   requestAnimationFrame(frame);
 }
+seedAtmosphere();
 requestAnimationFrame(frame);
 })();
 </script>
