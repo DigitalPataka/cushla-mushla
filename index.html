@@ -1929,9 +1929,13 @@ function titleCard(){
   return {bw, bh: Math.round(head + body + foot), lh, head,
           bx:(W-bw)/2, by: Math.max(8, (H-(head+body+foot))/2 - (PORTRAIT?10:20))};
 }
+// Sits BELOW the card, centred. It used to live in the card's top-right
+// corner, where the centred title ran straight underneath it.
 function musicBtn(){
-  const c = titleCard(), w = PORTRAIT ? Math.round(120*TS/1.34) : 148, h = PORTRAIT ? 34 : 32;
-  return {x: c.bx + c.bw - w - 14, y: c.by + 12, w, h};
+  const c = titleCard();
+  const w = PORTRAIT ? Math.round(132*SC) : 156, h = PORTRAIT ? Math.round(36*SC) : 34;
+  const y = Math.min(c.by + c.bh + 10*SC, H - h - 8);
+  return {x: W/2 - w/2, y, w, h};
 }
 function titleBtns(){
   const c = titleCard();
@@ -1975,12 +1979,14 @@ function drawTitle(t){
 
   // music toggle — off by default, so make it easy to find
   const mb = musicBtn();
-  ctx.fillStyle = MUS.on ? "#6bcB77" : "rgba(0,0,0,.10)";
-  roundRect(mb.x, mb.y, mb.w, mb.h, 16, true, false);
+  ctx.fillStyle = MUS.on ? "#6bcB77" : "rgba(255,255,255,.88)";
+  roundRect(mb.x, mb.y, mb.w, mb.h, mb.h/2, true, false);
+  if(!MUS.on){ ctx.strokeStyle="rgba(0,0,0,.14)"; ctx.lineWidth=2;
+               roundRect(mb.x, mb.y, mb.w, mb.h, mb.h/2, false, true); }
   ctx.textAlign="center"; ctx.textBaseline="middle";
-  ctx.fillStyle = MUS.on ? "#fff" : "#9b8a76";
-  ctx.font = PORTRAIT ? fnt(11, true) : "bold 14px Comic Sans MS, Arial";
-  ctx.fillText((MUS.on ? "♪ Music on" : "♪ Music off"), mb.x+mb.w/2, mb.y+mb.h/2+1);
+  ctx.fillStyle = MUS.on ? "#fff" : "#8a7460";
+  ctx.font = PORTRAIT ? fnt(12, true) : "bold 15px Comic Sans MS, Arial";
+  ctx.fillText((MUS.on ? "♪  Music on" : "♪  Music off"), mb.x+mb.w/2, mb.y+mb.h/2+1);
   ctx.textBaseline="alphabetic";
 
   // mode buttons
