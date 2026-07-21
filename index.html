@@ -144,7 +144,14 @@ const S = {
   step(){ tone(160+Math.random()*40,0.04,"sine",0.05); },
   win(){ [523,659,784,1047,1319].forEach((f,i)=>tone(f,0.4,"triangle",0.18,null,i*0.11)); },
   lose(){ [400,340,280].forEach((f,i)=>tone(f,0.25,"sine",0.14,null,i*0.13)); },
-  ui(){ tone(880,0.08,"triangle",0.12,1200); }
+  ui(){ tone(880,0.08,"triangle",0.12,1200); },
+  laugh(){                       // a daft cartoon belly laugh: ha-ha-haaa
+    [0, 0.17, 0.34, 0.55].forEach((d,i)=>{
+      const f = [330, 300, 275, 250][i];
+      tone(f, 0.13, "sawtooth", 0.09, f*0.78, d);
+      tone(f*2, 0.10, "triangle", 0.04, f*1.5, d+0.01);
+    });
+  }
 };
 
 /* ---------- light, cheerful background music ----------
@@ -264,7 +271,7 @@ function endStick(e){
         MUS.on = !MUS.on; S.ui();                    // just the toggle — don't start yet
       } else { S.ui(); startGame(); }
     }
-    else if(scene==="over" || scene==="intro"){ confirm_(); }
+    else if(scene!=="play"){ confirm_(); }   // any popup: tap to carry on
     else if(!humanWatch()) tapPeg = 0.22;  // "peg him!" — held briefly so it can't be missed
   }
   stick.on = false; stick.id = null; stick.dx = stick.dy = stick.mag = 0;
@@ -344,6 +351,73 @@ function blockedAt(x,y){
   }
   return null;
 }
+/* ---------- navigation grid ----------
+   Shonty used to steer greedily at his goal, which wedged him in a corner
+   between two blocked directions and made him jitter on the spot forever.
+   He now walks a real path: breadth-first search over a coarse grid.     */
+const NAV_CELL = Math.max(10, Math.round(13*SC));
+let navGrid = null, navW = 0, navH = 0;
+function buildNav(){
+  navW = Math.ceil(W/NAV_CELL); navH = Math.ceil(H/NAV_CELL);
+  navGrid = new Uint8Array(navW*navH);
+  for(let cy=0; cy<navH; cy++) for(let cx=0; cx<navW; cx++){
+    const x = cx*NAV_CELL+NAV_CELL/2, y = cy*NAV_CELL+NAV_CELL/2;
+    const ok = !blockedAt(x,y) && x>28*SC && x<W-28*SC && y>SINK_Y+2 && y<H-26*SC;
+    navGrid[cy*navW+cx] = ok ? 0 : 1;
+  }
+}
+const navCell = (x,y) => ({
+  cx: Math.min(navW-1, Math.max(0, Math.round((x-NAV_CELL/2)/NAV_CELL))),
+  cy: Math.min(navH-1, Math.max(0, Math.round((y-NAV_CELL/2)/NAV_CELL)))
+});
+let navFlow = null, navKey = "";      // cached "which way to the goal" field
+function navField(tx,ty){
+  if(!navGrid) buildNav();
+  let {cx:gx, cy:gy} = navCell(tx,ty);
+  if(navGrid[gy*navW+gx]){                        // goal sits in furniture
+    let best=null, bd=1e9;
+    for(let cy=0;cy<navH;cy++) for(let cx=0;cx<navW;cx++){
+      if(navGrid[cy*navW+cx]) continue;
+      const d=(cx-gx)*(cx-gx)+(cy-gy)*(cy-gy);
+      if(d<bd){ bd=d; best=[cx,cy]; }
+    }
+    if(best){ gx=best[0]; gy=best[1]; }
+  }
+  const key = gx+":"+gy;
+  if(key === navKey && navFlow) return navFlow;
+  const prev = new Int32Array(navW*navH).fill(-1);
+  const start = gy*navW+gx;
+  prev[start] = -2;
+  const q = [start];
+  let head = 0;
+  while(head < q.length){
+    const cur = q[head++], cx = cur%navW, cy = (cur-cx)/navW;
+    for(let k=0;k<4;k++){
+      const nx = cx + (k===0?1:k===1?-1:0), ny = cy + (k===2?1:k===3?-1:0);
+      if(nx<0||ny<0||nx>=navW||ny>=navH) continue;
+      const ni = ny*navW+nx;
+      if(navGrid[ni] || prev[ni]!==-1) continue;
+      prev[ni] = cur; q.push(ni);
+    }
+  }
+  navKey = key; navFlow = prev;
+  return prev;
+}
+// unit direction from (x,y) toward the goal, routed around furniture
+function navTo(x, y, tx, ty){
+  const flow = navField(tx,ty);
+  const {cx,cy} = navCell(x,y);
+  const i = cy*navW+cx, nxt = flow[i];
+  if(nxt === -2 || nxt === -1 || nxt === undefined){
+    const dx=tx-x, dy=ty-y, l=Math.hypot(dx,dy)||1;   // adjacent or unreachable
+    return {x:dx/l, y:dy/l};
+  }
+  const nx = nxt%navW, ny = (nxt-nx)/navW;
+  const vx = (nx*NAV_CELL+NAV_CELL/2)-x, vy = (ny*NAV_CELL+NAV_CELL/2)-y;
+  const l = Math.hypot(vx,vy)||1;
+  return {x:vx/l, y:vy/l};
+}
+
 // move with sliding — running into a table edge slides you along it
 function moveWithCollision(ch, dx, dy){
   const nx = Math.max(28*SC, Math.min(W-28*SC, ch.x + dx));
@@ -381,6 +455,11 @@ let bubbles = [], sparks = [], confetti = [], hearts = [];
 let shake = 0, flash = 0, snapFx = 0;
 let paused = false;
 let aiThink = 0, aiSkill = 0.5, aiPause = 0;
+// How long Shonty keeps moving after you spin round — your window to catch him.
+// Deliberately generous: without it he'd freeze instantly and be uncatchable.
+const AI_REACT = 0.45;
+let aiReact = AI_REACT;
+const AI_SPEED = 0.66;        // he creeps; you're quicker than he is
 
 /* ---------- match structure ----------
    One player, always doing something. Your turn: sneak up and peg Shonty —
@@ -443,22 +522,48 @@ function beginTurn(first){
 function resetPositions(){
   sneaker.x = START.x; sneaker.y = START.y; sneaker.facing = 0; sneaker.turnT = 0;
   sneaker.hasPeg = true;
+  catchAnim = null; apronFall = null;
+  cushla.apronOff = false; shonty.apronOff = false;
   washer.x = W/2; washer.y = SINK_Y; washer.facing = 0; washer.turnT = 0;
   LOOK.mode = "wash"; LOOK.t = 0; LOOK.dur = 2.6; LOOK.warn = false; LOOK.drift = 0;
   LOOK._pinged = false;
   peekE = 1; peekHeld = false;
-  aiThink = 0; aiPause = 0.6;
+  aiThink = 0; aiPause = 0.9;
   aiSkill = 0.42 + Math.random()*0.3;
+  // He starts his turn ALERT (not mid-reaction), so if you're already holding
+  // the look when he appears he waits it out instead of walking into it.
+  aiBurst = 0; aiRest = 0; aiCover = null; aiWatchT = 9; aiWind = 0;
+  graceT = 0.7;                       // brief no-catch grace as a turn opens
+  aiReact = AI_REACT * (0.85 + Math.random()*0.3);
+  navFlow = null; navKey = "";
 }
 const inMatch = () => scene!=="title" && scene!=="over";
+
+/* Popups wait for YOU — they never time out from under you mid-sentence.
+   Each has a short minimum so a stray tap can't skip it before it's drawn. */
+function minWait(){
+  if(scene==="intro")    return 0.7;
+  if(scene==="caught")   return 3.1;   // let the whole gag play out first
+  if(scene==="roundwin") return 0.9;
+  if(scene==="over")     return 1.2;
+  return 0;
+}
+const canAdvance = () => sceneT >= minWait();
 
 /* one shared "go on then" action: ENTER on desktop, a tap on a phone */
 function confirm_(){
   if(paused) return;
+  if(scene==="title"){ S.ui(); startGame(); return; }
+  if(!canAdvance()) return;
   S.ui();
-  if(scene==="title"){ startGame(); return; }
   if(scene==="over"){ confetti=[]; scene="title"; sceneT=0; return; }
   if(scene==="intro"){ readyWait = false; scene="play"; sceneT=0; return; }
+  if(scene==="caught"){ passTurn(); return; }
+  if(scene==="roundwin"){
+    if(turnPegs >= PER_TURN) passTurn();
+    else { scene="play"; sceneT=0; }
+    return;
+  }
 }
 function onKey(k){
   if(k==="enter"){ confirm_(); return; }
@@ -598,27 +703,72 @@ function placePeg(){
     washer.turnT=0; washer.facing=0;
   }
 }
+/* ---------- the catch, as a little sequence ----------
+   whips the apron off → marches over → TWANG → doubles up laughing        */
+let catchAnim = null, apronFall = null;
+
+function updateCatch(dt){
+  const ca = catchAnim; if(!ca) return;
+  ca.t += dt;
+  washer.facing = 1; washer.turnT = 1;
+
+  // 1. off comes the apron
+  if(ca.t > 0.28 && !ca.dropped){
+    ca.dropped = true; washer.apronOff = true;
+    apronFall = {x: washer.x, y: washer.y - 40, vy: -40, vx:(Math.random()-.5)*40,
+                 rot: 0, vr: 2.2, ground: washer.y + 4};
+    tone(300,0.12,"triangle",0.10,180);
+  }
+  // 2. marches over to the culprit
+  if(ca.t < 0.95){
+    const tx = sneaker.x + (washer.x > sneaker.x ? 40*SC : -40*SC);
+    const ty = sneaker.y - 4;
+    washer.x += (tx - washer.x) * Math.min(1, dt*5.5);
+    washer.y += (ty - washer.y) * Math.min(1, dt*5.5);
+    washer.moving = true; washer.walk += dt*11;
+  } else washer.moving = false;
+
+  // 3. TWANG
+  if(ca.t > 0.95 && !ca.snapped){
+    ca.snapped = true;
+    snapFx = 1; shake = 0.6;
+    sneaker.squeal = 2.0; sneaker.hop = 1.7;
+    for(let i=0;i<18;i++) sparks.push({x:sneaker.x,y:sneaker.y-46,vx:(Math.random()-.5)*300,vy:-Math.random()*180-30,life:0.7,col:"#ffd93d"});
+    S.snap(); setTimeout(()=>S.ow(), 140);
+    dropAPeg();
+  }
+  // 4. cracks up
+  if(ca.t > 1.35){
+    ca.laugh = Math.min(1, ca.laugh + dt*3);
+    if(!ca.laughed){ ca.laughed = true; S.laugh(); }
+    if(Math.random() < 0.05) hearts.push({x:washer.x+(Math.random()-.5)*50, y:washer.y-110, vy:-34, life:1.1});
+  }
+}
+
+// the twang shakes one of the pegs clean off — there goes a point
+function dropAPeg(){
+  if(washer.pegsOn.length === 0) return;
+  const lost = washer.pegsOn.pop();
+  fallers.push({
+    x: washer.x + lost.ox, y: washer.y + lost.oy,
+    vx: (Math.random()-0.5)*120 + (sneaker.x>washer.x?-40:40), vy: -90,
+    rot: lost.rot, vr: (Math.random()-0.5)*12, col: lost.col,
+    ground: washer.y + 6 + Math.random()*10
+  });
+  setTimeout(()=>{ tone(520,0.10,"square",0.12,300); }, 420);
+}
+
 function getCaught(){
   scene = "caught"; sceneT = 0;
-  sneaker.squeal = 1.9; sneaker.hop = 1.7;
-  snapFx = 1;
-  shake = 0.6;
-  for(let i=0;i<18;i++) sparks.push({x:sneaker.x,y:sneaker.y-46,vx:(Math.random()-.5)*300,vy:-Math.random()*180-30,life:0.7,col:"#ffd93d"});
-  S.snap(); setTimeout(()=>S.ow(), 140);
-  msg = sneaker===cushla ? "SNAP! He caught you!" : "GOTCHA! You caught him!";
-  sub = sneaker.who + "'s undies got a twang — \"OW!\"";
+  catchAnim = {t:0, dropped:false, snapped:false, laugh:0, laughed:false};
+  msg = sneaker===cushla ? "UNDIE SNAP! 😖" : "UNDIE SNAP! You got him! 😄";
+  sub = sneaker===cushla
+      ? "Caught you! Shonty grabbed the elastic of your undies, stretched it right out and — TWANG — let it go. \"OW!\""
+      : "Got him! You grabbed the elastic of Shonty's undies, pulled it way out and — TWANG — let go. \"OW!\"";
 
-  // the jolt shakes one of your pegs clean off him — there goes a point!
   if(washer.pegsOn.length > 0){
-    const lost = washer.pegsOn.pop();
-    fallers.push({
-      x: washer.x + lost.ox, y: washer.y + lost.oy,
-      vx: (Math.random()-0.5)*120 + (sneaker.x>washer.x?-40:40), vy: -90,
-      rot: lost.rot, vr: (Math.random()-0.5)*12, col: lost.col,
-      ground: washer.y + 6 + Math.random()*10
-    });
-    setTimeout(()=>{ tone(520,0.10,"square",0.12,300); }, 420);
-    sub += " …and a peg pinged right off him!";
+    sub += (sneaker===cushla ? " And one of your pegs pinged right off him."
+                             : " And one of his pegs pinged right off you.");
   }
 }
 
@@ -642,6 +792,7 @@ function updatePlay(dt){
   } else {
     const ai = aiMove(dt); mx = ai.x; my = ai.y;
     if(ai.peg){ placePeg(); return; }
+    throttle = AI_SPEED;               // he creeps rather than marches
   }
   const len = Math.hypot(mx,my) || 1;
   sneaker.vx = mx/len*SPD*throttle; sneaker.vy = my/len*SPD*throttle;
@@ -660,62 +811,98 @@ function updatePlay(dt){
   if(!sneaker.hasPeg && atPegBox()) reload();
 
   // ----- the rule: while he's looking, be STILL or be HIDDEN -----
+  if(graceT > 0) graceT -= dt;
   const hide = hiddenAt(sneaker.x, sneaker.y);
   sneaker.hidden = !!hide;
-  if(isWatching() && sneaker.moving && !hide){ getCaught(); return; }
+  if(graceT <= 0 && isWatching() && sneaker.moving && !hide){ getCaught(); return; }
 }
 
-/* ---------- Shonty's AI sneak ---------- */
+/* ---------- Shonty's AI sneak ----------
+   He should look like he's SNEAKING, not marching: he creeps in short dashes
+   between hiding pockets and pauses in cover to see if you'll turn. And he's
+   deliberately slow to react when you do spin round — that reaction window is
+   your whole chance of catching him, so it must be generous.               */
+let aiBurst = 0;        // >0: currently dashing
+let aiRest  = 0;        // >0: currently holding still
+let aiCover = null;     // the pocket he's making for
+let aiWatchT = 0;       // how long you've been looking at him
+let aiWind = 0;         // winding up to clip a peg on
+let aiSinceWatch = 0;   // how long since you last looked — he breaks cover then
+let graceT = 0;         // no catches for a moment as a turn opens
+
+function nearestCover(){
+  let best=null, bd=1e9;
+  for(const f of FURNITURE){
+    const cx=f.hide.x+f.hide.w/2, cy=f.hide.y+f.hide.h/2;
+    // only cover that's actually on the way — nearer the sink than he is
+    if(cy > sneaker.y + 20*SC) continue;
+    const d = Math.hypot(cx-sneaker.x, cy-sneaker.y);
+    if(d<bd){ bd=d; best={x:cx,y:cy,d}; }
+  }
+  return best;
+}
+
 function aiMove(dt){
-  aiThink -= dt;
   if(aiPause>0){ aiPause -= dt; return {x:0,y:0,peg:false}; }
 
   const watching = isWatching();
-  const warn = LOOK.warn || LOOK.mode==="turnF";
   const hide = hiddenAt(sneaker.x, sneaker.y);
-  // out of pegs? head back to the basket instead of the sink
-  const goal = sneaker.hasPeg ? {x:washer.x, y:washer.y+58} : {x:PEGBOX.x, y:PEGBOX.y};
+  const goal = sneaker.hasPeg ? {x:washer.x, y:washer.y+58*SC} : {x:PEGBOX.x, y:PEGBOX.y};
 
-  // reaction lag — this is how the AI gets itself caught sometimes
+  // --- you're looking at him ---
   if(watching){
-    if(hide) return {x:(Math.random()-.5)*0.2, y:0, peg:false};
-    if(aiThink > 0) {            // still "reacting" -> keeps moving, risky!
-      const d = toward(goal.x, goal.y); return {x:d.x,y:d.y,peg:false};
+    aiWatchT += dt; aiSinceWatch = 0;
+    aiWind = 0;
+    if(hide) return {x:0,y:0,peg:false};       // safe in cover, just waits
+    // REACTION WINDOW: he carries on for a beat before he notices you turned
+    if(aiWatchT < aiReact){
+      const d = navTo(sneaker.x, sneaker.y, goal.x, goal.y);
+      return {x:d.x, y:d.y, peg:false};
     }
-    return {x:0,y:0,peg:false};
+    return {x:0,y:0,peg:false};                // rumbled — freezes
   }
-  if(warn){
-    aiThink = (1-aiSkill)*0.45;  // lag it will burn when he actually turns
-    // dive for cover if one is very close, otherwise freeze
-    let best=null, bd=1e9;
-    for(const f of FURNITURE){
-      const cx=f.hide.x+f.hide.w/2, cy=f.hide.y+f.hide.h/2;
-      const d=Math.hypot(cx-sneaker.x, cy-sneaker.y);
-      if(d<bd){ bd=d; best={cx,cy}; }
-    }
-    if(best && bd < 120*aiSkill+40 && !hide){ const d=toward(best.cx,best.cy); return {x:d.x,y:d.y,peg:false}; }
-    return {x:0,y:0,peg:false};
-  }
-  // free to move
+  aiWatchT = 0;
+
+  // --- clipping a peg on takes a moment, so you can see it happening ---
   if(inPegRange()){
-    if(Math.random() < 0.55) return {x:0,y:0,peg:true};
+    aiWind += dt;
+    if(aiWind > 0.28){ aiWind = 0; return {x:0,y:0,peg:true}; }
     return {x:0,y:0,peg:false};
   }
-  const d = toward(goal.x, goal.y);
-  return {x:d.x, y:d.y, peg:false};
-}
-// Steer toward a goal, fanning out around furniture rather than shoving into it.
-function toward(tx,ty){
-  const dx=tx-sneaker.x, dy=ty-sneaker.y, l=Math.hypot(dx,dy)||1;
-  const base = Math.atan2(dy,dx);
-  const probe = 34*SC;
-  // try straight on, then progressively wider angles either side
-  for(const off of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2]){
-    const a = base + off;
-    const px = sneaker.x + Math.cos(a)*probe, py = sneaker.y + Math.sin(a)*probe;
-    if(!blockedAt(px, py) && px>28*SC && px<W-28*SC) return {x:Math.cos(a), y:Math.sin(a)};
+  aiWind = 0;
+
+  // --- he watches your meter: won't commit to the last few steps while
+  //     you've still got plenty of puff left to spin round with ---
+  if(humanWatch() && sneaker.hasPeg){
+    const close = Math.hypot(sneaker.x-washer.x, sneaker.y-washer.y) < 150*SC;
+    if(close && peekE > 0.62 && !hide){ aiRest = Math.max(aiRest, 0.25); return {x:0,y:0,peg:false}; }
   }
-  return {x:dx/l, y:dy/l};
+
+  // --- creep in dashes, resting in cover between them ---
+  aiSinceWatch += dt;
+  if(aiRest > 0){
+    aiRest -= dt;
+    if(aiRest <= 0){ aiBurst = 0.55 + Math.random()*0.85; aiCover = null; }
+    return {x:0,y:0,peg:false};
+  }
+  if(aiBurst <= 0){
+    // he watches YOUR rhythm: breaks cover just after you turn back to the sink
+    if(aiSinceWatch < 0.28){ return {x:0,y:0,peg:false}; }
+    // pick the next hop: a hiding pocket on the way, or straight on
+    const cover = nearestCover();
+    aiCover = (cover && cover.d < 190*SC && !hide && Math.random() < 0.62) ? cover : null;
+    aiBurst = 0.7 + Math.random()*0.95;
+  }
+  aiBurst -= dt;
+  const tgt = aiCover || goal;
+  const d = navTo(sneaker.x, sneaker.y, tgt.x, tgt.y);
+  // reached the pocket he was making for? settle in and wait
+  if(aiCover && Math.hypot(aiCover.x-sneaker.x, aiCover.y-sneaker.y) < 26*SC){
+    aiCover = null; aiBurst = 0; aiRest = 0.45 + Math.random()*0.9;
+    return {x:0,y:0,peg:false};
+  }
+  if(aiBurst <= 0){ aiRest = 0.35 + Math.random()*0.7; }
+  return {x:d.x, y:d.y, peg:false};
 }
 
 /* ============================================================
@@ -848,7 +1035,9 @@ function drawPerson(p, opts){
   const sx = Math.cos(facing*Math.PI);     // +1 back, -1 front
   const squish = Math.max(0.16, Math.abs(sx));
   const front = sx < 0;
-  const bob = p.moving ? Math.abs(Math.sin(p.walk))*3 : Math.sin(p.walk*0.9)*1.4;
+  const lg = o.laugh || 0;      // doubled-up-laughing amount, 0..1
+  const bob = (p.moving ? Math.abs(Math.sin(p.walk))*3 : Math.sin(p.walk*0.9)*1.4)
+            + lg*Math.abs(Math.sin(T*17))*7;
   const hopY = p.hop>0 ? -Math.abs(Math.sin((1-p.hop)*Math.PI*3))*16*p.hop : 0;
   const swing = p.moving ? Math.sin(p.walk)*11 : (o.scrub ? Math.sin(p.walk*3)*7 : Math.sin(p.walk*0.9)*2);
 
@@ -862,6 +1051,10 @@ function drawPerson(p, opts){
 
   ctx.save();
   ctx.translate(p.x, p.y + hopY);
+  if(lg > 0){                       // rocking back, holding his sides
+    ctx.translate(0, 6*lg);
+    ctx.rotate(Math.sin(T*9)*0.10*lg - 0.12*lg);
+  }
 
   // shadow
   ctx.fillStyle="rgba(90,50,20,.20)";
@@ -906,8 +1099,8 @@ function drawPerson(p, opts){
     ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(0,34,7,0,7); ctx.fill(); ctx.restore();
   }
 
-  // apron — worn by whoever's on dish duty
-  if(o.apron){
+  // apron — worn by whoever's on dish duty (whipped off to deliver a twang)
+  if(o.apron && !p.apronOff){
     const ap = "#fff6ea", trim = "#ff8fa3";
     if(front){
       ctx.fillStyle=ap;
@@ -959,14 +1152,22 @@ function drawPerson(p, opts){
   if(front){
     // ears
     ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(-21,hy+2,5,0,7); ctx.arc(21,hy+2,5,0,7); ctx.fill();
-    // eyes
-    ctx.fillStyle="#fff";
-    ctx.beginPath(); ctx.ellipse(-8,hy-2,6,7,0,0,7); ctx.ellipse(8,hy-2,6,7,0,0,7); ctx.fill();
-    ctx.fillStyle = isC ? "#2f80ed" : "#3b2417";
-    const ex = (o.scan||0)*3;
-    ctx.beginPath(); ctx.arc(-8+ex,hy-1,3.4,0,7); ctx.arc(8+ex,hy-1,3.4,0,7); ctx.fill();
-    ctx.fillStyle="#fff";
-    ctx.beginPath(); ctx.arc(-9.4+ex,hy-2.6,1.3,0,7); ctx.arc(6.6+ex,hy-2.6,1.3,0,7); ctx.fill();
+    // eyes — squeezed shut when he's cracking up
+    if(lg > 0.3){
+      ctx.strokeStyle = isC ? "#2f80ed" : "#3b2417"; ctx.lineWidth=2.8; ctx.lineCap="round";
+      ctx.beginPath();
+      ctx.arc(-8, hy+2, 6, Math.PI*1.15, Math.PI*1.85);
+      ctx.arc( 8, hy+2, 6, Math.PI*1.15, Math.PI*1.85);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle="#fff";
+      ctx.beginPath(); ctx.ellipse(-8,hy-2,6,7,0,0,7); ctx.ellipse(8,hy-2,6,7,0,0,7); ctx.fill();
+      ctx.fillStyle = isC ? "#2f80ed" : "#3b2417";
+      const ex = (o.scan||0)*3;
+      ctx.beginPath(); ctx.arc(-8+ex,hy-1,3.4,0,7); ctx.arc(8+ex,hy-1,3.4,0,7); ctx.fill();
+      ctx.fillStyle="#fff";
+      ctx.beginPath(); ctx.arc(-9.4+ex,hy-2.6,1.3,0,7); ctx.arc(6.6+ex,hy-2.6,1.3,0,7); ctx.fill();
+    }
     // brows
     ctx.strokeStyle = isC ? "#e0ac33" : "#1b0f09"; ctx.lineWidth=2.6; ctx.lineCap="round";
     ctx.beginPath(); ctx.moveTo(-13,hy-11); ctx.lineTo(-3,hy-13);
@@ -987,9 +1188,14 @@ function drawPerson(p, opts){
       ctx.beginPath(); ctx.ellipse(0,hy+7,19.5,16,0,0,Math.PI); ctx.fill();   // lower half only
       ctx.beginPath(); ctx.ellipse(-18.5,hy+2,4.5,9,0,0,7);                   // sideburns
       ctx.ellipse( 18.5,hy+2,4.5,9,0,0,7); ctx.fill();
-      // great big smile
+      // great big smile — wide open when he's laughing his head off
+      const mo = 1 + lg*(1.1 + Math.sin(T*17)*0.25);
       ctx.fillStyle="#4a2b16";
-      ctx.beginPath(); ctx.ellipse(0,hy+12,10,7,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0,hy+12,10,7*mo,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
+      if(lg > 0.3){
+        ctx.fillStyle="#e0798a";     // tongue
+        ctx.beginPath(); ctx.ellipse(0,hy+12+6*mo,5,3.4,0,0,Math.PI); ctx.fill();
+      }
       ctx.fillStyle="#fff";
       ctx.beginPath(); ctx.ellipse(0,hy+12,9,4.6,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
       ctx.fillStyle="#33200f"; // moustache, sitting just above the smile
@@ -1047,6 +1253,25 @@ function drawPerson(p, opts){
     ctx.save(); ctx.translate(0,-150+bob);
     ctx.fillStyle="rgba(255,90,90,.9)"; ctx.font="bold 17px Arial"; ctx.textAlign="center";
     ctx.fillText("👀 LOOKING!",0,0); ctx.restore();
+  }
+  if(lg > 0.25){                       // HA HA HA!
+    ctx.save();
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    for(let i=0;i<3;i++){
+      const ph = (T*2.2 + i*0.42) % 1;
+      ctx.globalAlpha = Math.min(1, lg) * (1-ph) * 0.95;
+      const s2 = 0.7 + ph*0.7;
+      ctx.save();
+      ctx.translate(34 + i*13, -118 - ph*46 + bob);
+      ctx.rotate(Math.sin(T*4+i)*0.3); ctx.scale(s2,s2);
+      ctx.fillStyle="#fff"; ctx.strokeStyle="#ffb703"; ctx.lineWidth=3;
+      roundRect(-25,-15,50,28,10,true,true);
+      ctx.fillStyle="#e07a1f"; ctx.font="bold 17px Comic Sans MS, Arial";
+      ctx.fillText(i%2 ? "ha!" : "HA!", 0, 0);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
   }
   if(p.squeal>0){
     const s = Math.min(1, p.squeal*1.6) * (PORTRAIT ? 1.45 : 1);
@@ -1148,10 +1373,11 @@ function banner(title, subtitle, col){
   wrapText(title, W/2, by+(PORTRAIT?48*TS/1.34:66), bw-40, PORTRAIT?30*TS/1.34:34);
   ctx.fillStyle="#7a5a3a"; ctx.font = PORTRAIT ? fnt(14) : "18px Comic Sans MS, Arial";
   wrapText(subtitle, W/2, by+(PORTRAIT?112*TS/1.34:104), bw-44, PORTRAIT?24*TS/1.34:24);
-  if(readyWait){
+  // every popup waits for you — say so, and make it obvious when it's ready
+  if(canAdvance()){
     ctx.fillStyle = (Math.sin(T*5)>0) ? col : "#ff8b3d";
     ctx.font = PORTRAIT ? fnt(15, true) : "bold 21px Comic Sans MS, Arial";
-    ctx.fillText(TOUCH?"tap when you're ready!":"press ENTER when you're ready!", W/2, by+bh-20);
+    ctx.fillText(TOUCH ? "tap to carry on ▸" : "press ENTER to carry on ▸", W/2, by+bh-20);
   }
   ctx.restore();
 }
@@ -1182,6 +1408,12 @@ function updateFx(dt){
   confetti.forEach(c=>{ c.y+=c.vy*dt; c.x+=c.vx*dt; c.rot+=c.vr*dt; if(c.y>H+20){ c.y=-20; } });
   if(shake>0) shake-=dt; if(flash>0) flash-=dt; if(snapFx>0) snapFx-=dt*0.62;
   if(tapPeg>0) tapPeg-=dt;
+  // the whipped-off apron, tumbling to the floor
+  if(apronFall && !apronFall.landed){
+    const a = apronFall;
+    a.x += a.vx*dt; a.y += a.vy*dt; a.vy += 700*dt; a.rot += a.vr*dt;
+    if(a.y >= a.ground){ a.y = a.ground; a.landed = true; a.rot = 0.3; }
+  }
   // pegs that pinged off, tumbling to the floor
   for(let i=fallers.length-1;i>=0;i--){
     const f = fallers[i];
@@ -1204,7 +1436,23 @@ function drawPeg(x,y,rot,col,scale){
   ctx.fillStyle="rgba(0,0,0,.22)"; ctx.fillRect(-5,-2,10,3);
   ctx.restore();
 }
+function drawApronFall(){
+  if(!apronFall) return;
+  const a = apronFall;
+  ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(a.rot);
+  if(a.landed) ctx.scale(1, 0.5);              // flops flat on the floor
+  ctx.fillStyle="#fff6ea";
+  roundRect(-16,-14,32,24,6,true,false);
+  roundRect(-22,8,44,26,6,true,false);
+  ctx.fillStyle="#ff8fa3"; ctx.fillRect(-23,6,46,5);
+  ctx.strokeStyle="#ff8fa3"; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(-13,-14); ctx.lineTo(-8,-24);
+  ctx.moveTo(13,-14); ctx.lineTo(8,-24); ctx.stroke();
+  ctx.fillStyle="rgba(255,143,163,.35)"; roundRect(-10,16,20,12,4,true,false);
+  ctx.restore();
+}
 function drawFx(){
+  drawApronFall();
   floorPegs.forEach(p=>{
     ctx.fillStyle="rgba(120,70,30,.16)";
     ctx.beginPath(); ctx.ellipse(p.x,p.y+3,13,4,0,0,7); ctx.fill();
@@ -1358,27 +1606,34 @@ function drawSnapFx(){
     i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
   }
   ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.fillStyle="#e63946"; ctx.font="bold 30px Comic Sans MS, Arial";
+  ctx.fillStyle="#e63946"; ctx.font="bold 21px Comic Sans MS, Arial";
   ctx.textAlign="center"; ctx.textBaseline="middle";
-  ctx.fillText("SNAP!",0,1);
+  ctx.fillText("UNDIE",0,-11); ctx.fillText("SNAP!",0,12);
   ctx.restore();
 }
 
 /* ---------- title ---------- */
-const TITLE_LINES = TOUCH ? [
-  "YOUR TURN — sneaking",
-  "👆  Swipe & hold to creep up behind Shonty.",
-  "✋  Let go to freeze when he spins round,",
-  "      or duck into a shaded pocket.",
-  "🎨  Tap right behind him to clip a peg on.",
-  "",
-  "HIS TURN — you're on the dishes",
-  "🫧  HOLD anywhere to spin round and",
-  "      catch him moving — but not for long!",
-  "",
-  "😖  Caught? SNAP — and a peg falls off.",
-  "🏆  2 pegs ends a turn. First to 5 wins."
-] : [
+// [heading, line, line, …] — drawn as tidy titled blocks on a phone
+const TITLE_BLOCKS = TOUCH ? [
+  ["YOUR TURN — sneak up on Shonty", [
+    "👆  Swipe & hold to creep.",
+    "✋  Let go to freeze when he turns,",
+    "      or duck behind the furniture.",
+    "🎨  Tap right behind him to peg him."
+  ]],
+  ["HIS TURN — you're on the dishes", [
+    "🫧  Hold to spin round and catch him",
+    "      sneaking. You can't watch for long!"
+  ]],
+  ["GET CAUGHT", [
+    "😖  UNDIE SNAP! — twang go the undies,",
+    "      and one of your pegs falls off."
+  ]],
+  ["", [
+    "🏆  2 pegs ends a turn. First to 5 wins."
+  ]]
+] : null;
+const TITLE_LINES = TOUCH ? [] : [
   "YOUR TURN — sneaking",
   "🧺  Shonty's at the sink. Creep up behind him with the arrow keys,",
   "      and press SPACE right behind him to clip a peg on.",
@@ -1395,11 +1650,16 @@ const TITLE_LINES = TOUCH ? [
 // the card is sized from its contents so it can never overflow a small screen
 function titleCard(){
   const bw = Math.min(680, W-24);
-  const lh = PORTRAIT ? Math.round(21*TS) : 27;
+  const lh = PORTRAIT ? Math.round(19*TS) : 27;
   const head = PORTRAIT ? Math.round(96*TS/1.34) : 130;
   const foot = PORTRAIT ? Math.round(112*TS/1.34) : 116;
-  const bh = head + TITLE_LINES.length*lh + foot;
-  return {bw, bh, lh, head, bx:(W-bw)/2, by: Math.max(8, (H-bh)/2 - (PORTRAIT?10:20))};
+  let body;
+  if(TITLE_BLOCKS){
+    body = 0;
+    for(const [h, ls] of TITLE_BLOCKS) body += (h ? lh*1.35 : 0) + ls.length*lh + lh*0.5;
+  } else body = TITLE_LINES.length*lh;
+  return {bw, bh: Math.round(head + body + foot), lh, head,
+          bx:(W-bw)/2, by: Math.max(8, (H-(head+body+foot))/2 - (PORTRAIT?10:20))};
 }
 function musicBtn(){
   const c = titleCard(), w = PORTRAIT ? Math.round(120*TS/1.34) : 148, h = PORTRAIT ? 34 : 32;
@@ -1424,9 +1684,26 @@ function drawTitle(t){
   ctx.fillStyle="#2fa8a0"; ctx.font = PORTRAIT ? fnt(13, true) : "bold 22px Comic Sans MS, Arial";
   ctx.fillText("…the great kitchen peg caper!", W/2, by+(PORTRAIT?78*TS/1.34:114));
 
-  ctx.fillStyle="#7a5a3a"; ctx.font = PORTRAIT ? fnt(12) : "17px Comic Sans MS, Arial";
   ctx.textAlign="left";
-  TITLE_LINES.forEach((l,i)=> ctx.fillText(l, bx+(PORTRAIT?14:44), by+c.head+i*c.lh));
+  if(TITLE_BLOCKS){
+    let y = by + c.head;
+    const px = bx + 16;
+    for(const [head, lines] of TITLE_BLOCKS){
+      if(head){
+        ctx.fillStyle="#e63946"; ctx.font = fnt(11, true);
+        ctx.fillText(head.toUpperCase(), px, y);
+        ctx.strokeStyle="rgba(230,57,70,.20)"; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.moveTo(px, y+5); ctx.lineTo(bx+c.bw-16, y+5); ctx.stroke();
+        y += c.lh*1.35;
+      }
+      ctx.fillStyle="#7a5a3a"; ctx.font = fnt(12);
+      for(const l of lines){ ctx.fillText(l, px, y); y += c.lh; }
+      y += c.lh*0.5;
+    }
+  } else {
+    ctx.fillStyle="#7a5a3a"; ctx.font = "17px Comic Sans MS, Arial";
+    TITLE_LINES.forEach((l,i)=> ctx.fillText(l, bx+44, by+c.head+i*c.lh));
+  }
 
   // music toggle — off by default, so make it easy to find
   const mb = musicBtn();
@@ -1472,16 +1749,12 @@ function frame(now){
 
   if(paused){ /* everything frozen — just keep rendering */ }
   else if(scene==="play") updatePlay(dt);
-  else if(scene==="intro"){ updateLook(dt); if(!readyWait && sceneT>2.0){ scene="play"; sceneT=0; } }
-  // caught = your turn is over either way
-  else if(scene==="caught"){ if(sceneT>3.6) passTurn(); }
-  // two pegs ends the turn; otherwise sneak back to the basket yourself
-  else if(scene==="roundwin"){
-    if(sceneT>1.7){
-      if(turnPegs >= PER_TURN) passTurn();
-      else { scene="play"; sceneT=0; }
-    }
-  }
+  else if(scene==="intro"){ updateLook(dt); }
+  else if(scene==="caught"){ updateCatch(dt); }
+  // every popup now waits for a tap; these are just anti-softlock backstops
+  else if(scene==="intro"   && sceneT>25) confirm_();
+  else if(scene==="caught"  && sceneT>25) confirm_();
+  else if(scene==="roundwin"&& sceneT>25) confirm_();
   updateFx(dt);
 
   // ---- render ----
@@ -1503,6 +1776,7 @@ function frame(now){
     const items = [];
     items.push({y: washer.y, d:()=>drawPerson(washer,{
       apron: true,
+      laugh: (scene==="caught" && catchAnim) ? catchAnim.laugh : 0,
       scrub: LOOK.mode==="wash",
       warn: LOOK.warn || LOOK.mode==="turnF",
       eyeing: LOOK.mode==="look",
@@ -1563,7 +1837,7 @@ function frame(now){
     drawHUD();
     if(scene==="intro")    banner(msg, sub, "#ff8b3d");
     // let the SNAP + squeal play out in full before the popup covers it
-    if(scene==="caught" && sceneT>1.9) banner(msg, sub, "#e63946");
+    if(scene==="caught" && sceneT>2.3) banner(msg, sub, "#e63946");
     if(scene==="roundwin") banner(msg, sub, "#2f9e56");
     if(scene==="over")     banner(msg, sub, "#ffb703");
     drawStatusStrip();
