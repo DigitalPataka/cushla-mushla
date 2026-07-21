@@ -41,7 +41,7 @@
 <div id="wrap">
   <h1>✨ Cushla Mushla ✨</h1>
   <canvas id="game" width="960" height="600"></canvas>
-  <div id="hint">Your turn: ← → ↑ ↓ / WASD to sneak &nbsp;•&nbsp; SPACE to peg &nbsp;•&nbsp; his turn: hold SPACE to spin round<br><span style="opacity:.75">P pause &nbsp;•&nbsp; R restart &nbsp;•&nbsp; N music &nbsp;•&nbsp; M mute &nbsp;—&nbsp; on a phone: swipe &amp; hold to sneak, let go to freeze, tap to peg</span></div>
+  <div id="hint">Your turn: ← → ↑ ↓ / WASD to sneak &nbsp;•&nbsp; SPACE to peg &nbsp;•&nbsp; his turn: hold SPACE to spin round<br><span style="opacity:.75">One minute a turn — watch Beanbags lean &nbsp;•&nbsp; P pause &nbsp;•&nbsp; R restart &nbsp;•&nbsp; N music &nbsp;•&nbsp; M mute &nbsp;—&nbsp; on a phone: swipe &amp; hold to sneak, let go to freeze, tap to peg</span></div>
 </div>
 <script>
 (() => {
@@ -154,9 +154,10 @@ const S = {
   },
   /* ----- the cat on the cat tree: your one-minute clock ----- */
   creak(u){                      // u = 0..1 through the minute; leans get nastier
-    const f = 104 - u*34;
-    tone(f, 0.20+u*0.14, "sawtooth", 0.030+u*0.045, f*0.72);
-    tone(f*5.5, 0.07, "triangle", 0.014+u*0.020, f*4.2, 0.02);
+    // A dry little wooden tick. This was a low sawtooth drone, which on a phone
+    // just read as a bass note — wood is a short resonant scrape, not a pitch.
+    noise(0.05 + u*0.03, 0.035 + u*0.04, 1600 - u*500, 12);
+    tone(420 - u*90, 0.045, "triangle", 0.008 + u*0.010, 340 - u*70, 0.012);
   },
   purr(){                        // a fat, contented rumble
     for(let i=0;i<8;i++) tone(66 + (i%2)*9, 0.10, "sawtooth", 0.05, null, i*0.072);
@@ -340,17 +341,21 @@ const FURNITURE = PORTRAIT ? [
   furn(0.30, 0.16, 196, 56, "table"),
   furn(0.85, 0.32,  84, 68, "plant"),
   // up from 0.49 so it clears the cat tree standing in the bottom-left corner
-  furn(0.20, 0.36,  96, 66, "basket"),
-  furn(0.79, 0.66,  88, 54, "chair"),
-  // nudged right of its old 0.33 to leave the bottom-left corner clear for the
-  // cat tree — the left-hand route was barely a gap before anyway
-  furn(0.45, 0.83, 166, 56, "table")
+  furn(0.20, 0.39,  96, 66, "basket"),
+  furn(0.79, 0.66,  92, 52, "flowers"),
+  // The chair took the wide table's place at the front: it's much narrower, so
+  // it clears both the cat tree and the spawn point. A piece here must clear
+  // BOTH — the table sat over START on short screens (Safari with its address
+  // bar showing), which wedged the sneaker solid and froze the game. These
+  // numbers are checked against every phone shape; re-check before moving it.
+  furn(0.44, 0.83,  88, 54, "chair")
 ] : [
   {x:300, y:300, w:280, h:60, kind:"table"},
   // up from its old y:392 — the bottom-left corner is the cat's now
   {x: 96, y:232, w: 92, h:74, kind:"plant"},
   {x:768, y:360, w: 98, h:66, kind:"basket"},
-  {x:430, y:466, w: 96, h:56, kind:"chair"}
+  {x:430, y:466, w: 96, h:56, kind:"chair"},
+  {x:620, y:452, w: 92, h:52, kind:"flowers"}
 ];
 
 /* ---------- the cat tree, and Beanbags asleep on top ----------
@@ -454,6 +459,23 @@ function navTo(x, y, tx, ty){
   return {x:vx/l, y:vy/l};
 }
 
+/* Safety net for spawn points. moveWithCollision refuses BOTH axes from inside
+   a solid box, so anyone who starts in furniture is wedged forever — no walking
+   out of it. That froze the sneaker completely on short phone screens once, so
+   now we always shake a start position loose before using it. */
+function freeSpot(x, y){
+  if(!blockedAt(x, y)) return {x, y};
+  for(let r = 12*SC; r <= 240*SC; r += 12*SC){
+    for(let a = 0; a < 12; a++){
+      const t = a*Math.PI/6;
+      const nx = Math.max(28*SC, Math.min(W-28*SC, x + Math.cos(t)*r));
+      const ny = Math.max(SINK_Y+2, Math.min(H-26*SC, y + Math.sin(t)*r));
+      if(!blockedAt(nx, ny)) return {x:nx, y:ny};
+    }
+  }
+  return {x, y};                       // nowhere free at all — shouldn't happen
+}
+
 // move with sliding — running into a table edge slides you along it
 function moveWithCollision(ch, dx, dy){
   const nx = Math.max(28*SC, Math.min(W-28*SC, ch.x + dx));
@@ -546,21 +568,27 @@ function beginTurn(first){
   turnPegs = 0;
   scene = "intro"; sceneT = 0;
   readyWait = false;
+  // Every turn is also on a one-minute clock, and the only thing that tells you
+  // so is Beanbags leaning — so the intro has to actually say it.
+  const CLOCK = "You've got a minute — watch Beanbags lean.";
   if(sneaker === cushla){
     msg = "Your turn to sneak!";
     sub = "Creep up behind Shonty and peg him. Freeze or hide when he looks — "
-        + PER_TURN + " pegs and it's his go.";
+        + PER_TURN + " pegs and it's his go. " + CLOCK;
   } else {
     msg = "You're on the dishes!";
-    sub = TOUCH
-      ? "Shonty's sneaking up on you. HOLD anywhere to spin round and catch him — but you can't watch forever."
-      : "Shonty's sneaking up on you. HOLD SPACE to spin round and catch him — but you can't watch forever.";
+    sub = (TOUCH
+      ? "Shonty's sneaking up on you. HOLD anywhere to spin round and catch him. "
+      : "Shonty's sneaking up on you. HOLD SPACE to spin round and catch him. ")
+      + CLOCK;
   }
   if(first) sub = "Sneak up behind Shonty and clip a peg on his back. "
-                + PER_TURN + " pegs and it's his turn. First to " + target + " wins!";
+                + PER_TURN + " pegs and it's his turn. " + CLOCK
+                + " First to " + target + " wins!";
 }
 function resetPositions(){
-  sneaker.x = START.x; sneaker.y = START.y; sneaker.facing = 0; sneaker.turnT = 0;
+  const sp = freeSpot(START.x, START.y);
+  sneaker.x = sp.x; sneaker.y = sp.y; sneaker.facing = 0; sneaker.turnT = 0;
   sneaker.hasPeg = true;
   catchAnim = null; apronFall = null;
   cushla.apronOff = false; shonty.apronOff = false;
@@ -855,11 +883,9 @@ function catTimeUp(){
   scene = "catfall"; sceneT = 0;
   catFall = {t:0, crashed:false};
   msg = "TIMBER!";
-  sub = sneaker===cushla
-      ? "A minute of Beanbags was all that tree could take — down it came on the pegs. "
-        + "Shonty spun round. On the dishes with you!"
-      : "Down came Beanbags and her tree, right on the pegs! Shonty jumped out of his "
-        + "skin — his turn's up. Your go to sneak.";
+  sub = "Down came Beanbags and her cat tree, right on the pegs — "
+      + (sneaker===cushla ? "your minute's up. On the dishes with you!"
+                          : "his minute's up. Your go to sneak!");
 }
 function updateCatFall(dt){
   const cf = catFall; if(!cf) return;
@@ -919,7 +945,7 @@ function updatePlay(dt){
   cat.creakT -= dt;
   if(cat.creakT <= 0){
     if(u > 0.12) S.creak(u);
-    cat.creakT = 3.4 - u*2.7 + Math.random()*0.6;      // groans quicken as she tips
+    cat.creakT = 4.0 - u*2.6 + Math.random()*0.7;      // groans quicken as she tips
   }
   if(turnClock <= 0){ catTimeUp(); return; }
 
@@ -1568,6 +1594,39 @@ function drawFurniture(f){
     ctx.fillStyle="#8bc7e8"; roundRect(f.x,f.y-34,f.w,34,8,true,false);
     ctx.fillStyle="#69aed3"; roundRect(f.x,f.y,f.w,f.h-16,8,true,false);
     ctx.fillStyle="#4f8fb3"; ctx.fillRect(f.x+8,f.y+f.h-16,10,18); ctx.fillRect(f.x+f.w-18,f.y+f.h-16,10,18);
+  } else if(f.kind==="flowers"){
+    const cx = f.x + f.w/2, top = f.y + 20;
+    ctx.fillStyle="#a5744d"; ctx.fillRect(cx-5, top+4, 10, f.h-12);      // slim leg
+    ctx.fillStyle="#8b5e3c"; roundRect(cx-18, f.y+f.h-4, 36, 8, 4, true, false);
+    ctx.fillStyle="#c98a53"; roundRect(f.x+6, top-6, f.w-12, 13, 6, true, false);
+    ctx.fillStyle="#e0a86b"; roundRect(f.x+8, top-9, f.w-16, 9, 5, true, false);
+    // vase
+    ctx.fillStyle="#7fb8d8";
+    ctx.beginPath();
+    ctx.moveTo(cx-8, top-26); ctx.quadraticCurveTo(cx-13, top-10, cx-6, top-9);
+    ctx.lineTo(cx+6, top-9); ctx.quadraticCurveTo(cx+13, top-10, cx+8, top-26);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,.40)"; roundRect(cx-5, top-23, 3, 11, 1.5, true, false);
+    // stems, leaves, blooms
+    const blooms = [[-14,-52,"#ff8fab"],[1,-60,"#ffd93d"],[13,-49,"#c77dff"]];
+    ctx.strokeStyle="#5ea45f"; ctx.lineWidth=2.2; ctx.lineCap="round";
+    for(const b of blooms){
+      ctx.beginPath(); ctx.moveTo(cx, top-24);
+      ctx.quadraticCurveTo(cx+b[0]*0.5, top-40, cx+b[0], top+b[1]+7); ctx.stroke();
+    }
+    ctx.lineCap="butt";
+    ctx.fillStyle="#5ea45f";
+    ctx.beginPath(); ctx.ellipse(cx-9, top-36, 7, 3.4, -0.5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx+9, top-33, 7, 3.4,  0.5, 0, 7); ctx.fill();
+    for(const b of blooms){
+      const bx = cx+b[0], by = top+b[1]+7;
+      ctx.fillStyle = b[2];
+      for(let i=0;i<5;i++){
+        const a = i*Math.PI*2/5;
+        ctx.beginPath(); ctx.arc(bx+Math.cos(a)*5, by+Math.sin(a)*5, 4.2, 0, 7); ctx.fill();
+      }
+      ctx.fillStyle="#fff6c9"; ctx.beginPath(); ctx.arc(bx, by, 3.2, 0, 7); ctx.fill();
+    }
   } else if(f.kind==="cattree"){
     ctx.restore(); drawCatTree(); return;
   } else if(f.kind==="rug"){
@@ -1956,7 +2015,8 @@ function drawScore(x,y,bw,name,col,n,active){
 function banner(title, subtitle, col, icon){
   ctx.save();
   ctx.fillStyle="rgba(0,0,0,.28)"; ctx.fillRect(0,0,W,H);
-  const bw=Math.min(640, W-28), bh=PORTRAIT?Math.round(250*TS/1.34):176;
+  // 176 only had room for two subtitle lines before the "carry on" prompt
+  const bw=Math.min(640, W-28), bh=PORTRAIT?Math.round(268*TS/1.34):202;
   const bx=(W-bw)/2, by=(H-bh)/2-10;
   ctx.fillStyle="#fff"; ctx.strokeStyle=col; ctx.lineWidth=7;
   roundRect(bx,by,bw,bh,26,true,true);
@@ -2119,8 +2179,14 @@ function drawStatusStrip(){
   ctx.globalAlpha = 0.94;
   ctx.fillStyle = col; roundRect(8*SC, y, W-16*SC, h, 12*SC, true, false);
   ctx.globalAlpha = 1;
-  ctx.fillStyle="#fff"; ctx.font=fnt(14, true);
+  ctx.fillStyle="#fff";
   ctx.textAlign="center"; ctx.textBaseline="middle";
+  // shrink to fit rather than run off the edge of a narrow phone
+  let fs = 14;
+  ctx.font = fnt(fs, true);
+  while(ctx.measureText(text).width > W - 34*SC && fs > 9){
+    fs -= 0.5; ctx.font = fnt(fs, true);
+  }
   ctx.fillText(text, W/2, y + h/2 + 1);
   ctx.restore();
 }
@@ -2229,49 +2295,56 @@ function drawSnapFx(){
 // [heading, line, line, …] — drawn as tidy titled blocks on a phone
 const TITLE_BLOCKS = TOUCH ? [
   ["YOUR TURN — sneak up on Shonty", [
-    "👆  Swipe & hold to creep.",
-    "✋  Let go to freeze when he turns,",
-    "      or duck behind the furniture.",
+    "👆  Swipe & hold to creep, let go to freeze.",
+    "✋  When he turns: be still, or hide.",
     "🎨  Tap right behind him to peg him."
   ]],
   ["HIS TURN — you're on the dishes", [
-    "🫧  Hold to spin round and catch him",
-    "      sneaking. You can't watch for long!"
+    "🫧  Hold to spin round and catch him.",
+    "      You can't watch for long!"
   ]],
-  ["GET CAUGHT", [
-    "😖  UNDIE SNAP! — twang go the undies,",
-    "      and one of your pegs falls off."
+  ["BEANBAGS — your one-minute clock", [
+    "🐈  When her tree topples, the turn's up."
   ]],
   ["", [
+    "😖  Caught? SNAP — and a peg pings off.",
     "🏆  2 pegs ends a turn. First to 5 wins."
   ]]
 ] : null;
 const TITLE_LINES = TOUCH ? [] : [
   "YOUR TURN — sneaking",
-  "🧺  Shonty's at the sink. Creep up behind him with the arrow keys,",
-  "      and press SPACE right behind him to clip a peg on.",
-  "👀  When he spins round: STOP MOVING, or hide in the shaded",
-  "      pocket behind the table, plant, basket or chair.",
+  "🧺  Creep up behind Shonty with the arrow keys, then press SPACE",
+  "      right behind him to clip a peg on.",
+  "👀  When he spins round: STOP MOVING, or hide behind furniture.",
   "",
   "HIS TURN — you're on the dishes",
-  "🫧  Now YOU choose when to look. HOLD SPACE to spin round and",
-  "      catch him moving — but you can't watch forever.",
+  "🫧  HOLD SPACE to spin round and catch him moving —",
+  "      but you can't watch forever.",
   "",
-  "😖  Caught either way? SNAP go the undies, and a peg pings off.",
+  "BEANBAGS — your one-minute clock",
+  "🐈  When her cat tree topples onto the pegs, the turn is up.",
+  "",
+  "😖  Caught either way? SNAP — and a peg pings off.",
   "🏆  Two pegs ends a turn. First to " + TARGET + " pegs wins."
 ];
 // the card is sized from its contents so it can never overflow a small screen
 function titleCard(){
   const bw = Math.min(680, W-24);
-  const lh = PORTRAIT ? Math.round(19*TS) : 27;
   const head = PORTRAIT ? Math.round(96*TS/1.34) : 130;
-  const foot = PORTRAIT ? Math.round(112*TS/1.34) : 116;
-  let body;
-  if(TITLE_BLOCKS){
-    body = 0;
-    for(const [h, ls] of TITLE_BLOCKS) body += (h ? lh*1.35 : 0) + ls.length*lh + lh*0.5;
-  } else body = TITLE_LINES.length*lh;
-  return {bw, bh: Math.round(head + body + foot), lh, head,
+  // the foot has to clear the PLAY button AND the two mascots standing below it
+  const foot = PORTRAIT ? Math.round(140*TS/1.34) : 150;
+  // line-heights the body needs — must match how drawTitle advances y
+  const units = TITLE_BLOCKS
+    ? TITLE_BLOCKS.reduce((n,[h,ls]) => n + (h ? 1.35 : 0) + ls.length + 0.5, 0)
+    : TITLE_LINES.length;
+  const baseLh = PORTRAIT ? Math.round(19*TS) : 27;
+  // This card used to size itself to its contents and simply trust that to fit,
+  // which quietly ran off the bottom of the screen as soon as the rules grew a
+  // few lines. Now it squeezes text and spacing together to stay on screen.
+  const avail = H - 16 - head - foot;
+  const k  = Math.max(0.62, Math.min(1, avail / (units*baseLh)));
+  const lh = baseLh*k, body = units*lh;
+  return {bw, bh: Math.round(head + body + foot), lh, head, k,
           bx:(W-bw)/2, by: Math.max(8, (H-(head+body+foot))/2 - (PORTRAIT?10:20))};
 }
 // Sits BELOW the card, centred. It used to live in the card's top-right
@@ -2307,18 +2380,18 @@ function drawTitle(t){
     const px = bx + 16;
     for(const [head, lines] of TITLE_BLOCKS){
       if(head){
-        ctx.fillStyle="#e63946"; ctx.font = fnt(11, true);
+        ctx.fillStyle="#e63946"; ctx.font = fnt(11*c.k, true);
         ctx.fillText(head.toUpperCase(), px, y);
         ctx.strokeStyle="rgba(230,57,70,.20)"; ctx.lineWidth=1.5;
         ctx.beginPath(); ctx.moveTo(px, y+5); ctx.lineTo(bx+c.bw-16, y+5); ctx.stroke();
         y += c.lh*1.35;
       }
-      ctx.fillStyle="#7a5a3a"; ctx.font = fnt(12);
+      ctx.fillStyle="#7a5a3a"; ctx.font = fnt(12*c.k);
       for(const l of lines){ ctx.fillText(l, px, y); y += c.lh; }
       y += c.lh*0.5;
     }
   } else {
-    ctx.fillStyle="#7a5a3a"; ctx.font = "17px Comic Sans MS, Arial";
+    ctx.fillStyle="#7a5a3a"; ctx.font = Math.round(17*c.k) + "px Comic Sans MS, Arial";
     TITLE_LINES.forEach((l,i)=> ctx.fillText(l, bx+44, by+c.head+i*c.lh));
   }
 
@@ -2351,11 +2424,15 @@ function drawTitle(t){
                      : "1 / 2 or ENTER to start  •  P pause  •  R restart  •  N music  •  M mute",
                W/2, by+bh-14);
   ctx.restore();
-  // mascots
-  const my = PORTRAIT ? H-70 : 560;
-  const mC = {who:"Cushla", x:W*0.17, y:my, walk:t*4, moving:true, facing:1, pegsOn:[], squeal:0, hop:0, dir:1};
-  const mS = {who:"Shonty", x:W*0.83, y:my, walk:t*4, moving:true, facing:1, pegsOn:[], squeal:0, hop:0, dir:1};
-  drawPerson(mC,{}); drawPerson(mS,{});
+  // Mascots, flanking the PLAY button. They're pinned near the bottom of the
+  // SCREEN, so on a phone — where the card fills it — they used to stand right
+  // on top of the last line of the rules. Smaller, and further into the corners.
+  const my = PORTRAIT ? H-56 : 566, ms = PORTRAIT ? 0.62 : 0.85;
+  const mascot = (who, x) => {
+    const p = {who, x:0, y:0, walk:t*4, moving:true, facing:1, pegsOn:[], squeal:0, hop:0, dir:1};
+    ctx.save(); ctx.translate(x, my); ctx.scale(ms, ms); drawPerson(p, {}); ctx.restore();
+  };
+  mascot("Cushla", W*0.11); mascot("Shonty", W*0.89);
 }
 
 /* ---------- main loop ---------- */
