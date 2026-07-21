@@ -854,7 +854,7 @@ function getCaught(){
 function catTimeUp(){
   scene = "catfall"; sceneT = 0;
   catFall = {t:0, crashed:false};
-  msg = "TIMBER! 🐈";
+  msg = "TIMBER!";
   sub = sneaker===cushla
       ? "A minute of Beanbags was all that tree could take — down it came on the pegs. "
         + "Shonty spun round. On the dishes with you!"
@@ -1499,6 +1499,47 @@ function drawCat(u, settle){
   ctx.restore();
 }
 
+/* A little Beanbags for the TIMBER! banner. The 🐈 emoji is a ginger tabby on
+   every platform, and she is emphatically grey and white, so she's drawn. */
+function drawBeanbagsIcon(x, y, s){
+  const grey="#9aa1a9", cream="#f4f6f8";
+  ctx.save();
+  ctx.translate(x, y); ctx.scale(s, s);
+  // tail curled round the side
+  ctx.strokeStyle=grey; ctx.lineWidth=7; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(-15,5); ctx.quadraticCurveTo(-26,10,-15,16); ctx.stroke();
+  ctx.lineCap="butt";
+  // the loaf, and her white belly
+  ctx.fillStyle=grey;  ctx.beginPath(); ctx.ellipse(0,7,22,12,0,0,7); ctx.fill();
+  ctx.fillStyle=cream; ctx.beginPath(); ctx.ellipse(2,12,16,6,0,0,7); ctx.fill();
+  // ears
+  ctx.fillStyle=grey;
+  ctx.beginPath(); ctx.moveTo(-11,-10); ctx.lineTo(-13,-21); ctx.lineTo(-3,-13); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(8,-12);  ctx.lineTo(12,-21); ctx.lineTo(14,-9);  ctx.closePath(); ctx.fill();
+  ctx.fillStyle="#f0a9b8";
+  ctx.beginPath(); ctx.moveTo(-10,-12); ctx.lineTo(-11.5,-18); ctx.lineTo(-5.5,-13.5); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(9,-13);   ctx.lineTo(11,-18.5); ctx.lineTo(12.5,-11); ctx.closePath(); ctx.fill();
+  // fat cheeks, white face
+  ctx.fillStyle=grey;  ctx.beginPath(); ctx.ellipse(1,-5,14,12,0,0,7); ctx.fill();
+  ctx.fillStyle=cream; ctx.beginPath(); ctx.ellipse(2,-2,11,9.5,0,0,7); ctx.fill();
+  // fast asleep, and pleased with herself
+  ctx.strokeStyle="#4a4f55"; ctx.lineWidth=1.8; ctx.lineCap="round";
+  ctx.beginPath(); ctx.arc(-3,-5,3.4,0.35,Math.PI-0.35); ctx.stroke();
+  ctx.beginPath(); ctx.arc( 8,-5,3.4,0.35,Math.PI-0.35); ctx.stroke();
+  ctx.fillStyle="#f0a9b8";
+  ctx.beginPath(); ctx.moveTo(0.5,-1); ctx.lineTo(4.5,-1); ctx.lineTo(2.5,2); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle="#8d939a"; ctx.lineWidth=1.3;
+  ctx.beginPath(); ctx.arc(0,2,3,0.15,Math.PI-0.15); ctx.stroke();
+  ctx.beginPath(); ctx.arc(5,2,3,0.15,Math.PI-0.15); ctx.stroke();
+  ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=1.1;
+  ctx.beginPath(); ctx.moveTo(-6,-1); ctx.lineTo(-17,-3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-6,2);  ctx.lineTo(-17,3);  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(10,-1); ctx.lineTo(20,-3);  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(10,2);  ctx.lineTo(20,3);   ctx.stroke();
+  ctx.lineCap="butt";
+  ctx.restore();
+}
+
 function drawFurniture(f){
   ctx.save();
   ctx.fillStyle="rgba(120,70,30,.16)";
@@ -1910,7 +1951,9 @@ function drawScore(x,y,bw,name,col,n,active){
   ctx.restore();
 }
 
-function banner(title, subtitle, col){
+/* `icon` is optional: {w, draw(x,y)} — drawn to the right of the title, with
+   the two centred together as one unit rather than the title alone. */
+function banner(title, subtitle, col, icon){
   ctx.save();
   ctx.fillStyle="rgba(0,0,0,.28)"; ctx.fillRect(0,0,W,H);
   const bw=Math.min(640, W-28), bh=PORTRAIT?Math.round(250*TS/1.34):176;
@@ -1919,7 +1962,15 @@ function banner(title, subtitle, col){
   roundRect(bx,by,bw,bh,26,true,true);
   ctx.textAlign="center";
   ctx.fillStyle=col; ctx.font = PORTRAIT ? fnt(23, true) : "bold 40px Comic Sans MS, Arial";
-  wrapText(title, W/2, by+(PORTRAIT?48*TS/1.34:66), bw-40, PORTRAIT?30*TS/1.34:34);
+  const ty = by+(PORTRAIT?48*TS/1.34:66);
+  let tx = W/2;
+  if(icon){
+    const tw = ctx.measureText(title).width, gap = PORTRAIT ? 9*TS/1.34 : 14;
+    tx = W/2 - (gap + icon.w)/2;                       // shift the words left…
+    icon.draw(tx + tw/2 + gap + icon.w/2, ty - (PORTRAIT?9*TS/1.34:13));   // …cat on the right
+    ctx.fillStyle = col;                               // the icon changed the fill
+  }
+  wrapText(title, tx, ty, bw-40, PORTRAIT?30*TS/1.34:34);
   ctx.fillStyle="#7a5a3a"; ctx.font = PORTRAIT ? fnt(14) : "18px Comic Sans MS, Arial";
   wrapText(subtitle, W/2, by+(PORTRAIT?112*TS/1.34:104), bw-44, PORTRAIT?24*TS/1.34:24);
   // every popup waits for you — say so, and make it obvious when it's ready
@@ -2415,7 +2466,10 @@ function frame(now){
     // let the SNAP + squeal play out in full before the popup covers it
     if(scene==="caught" && sceneT>2.3) banner(msg, sub, "#e63946");
     // same again: the crash, the pegs and the cat land before the words do
-    if(scene==="catfall" && sceneT>1.9) banner(msg, sub, "#9b7bd4");
+    if(scene==="catfall" && sceneT>1.9){
+      const s = PORTRAIT ? 0.70*TS/1.34 : 1;
+      banner(msg, sub, "#9b7bd4", {w: 48*s, draw:(x,y)=>drawBeanbagsIcon(x,y,s)});
+    }
     if(scene==="roundwin") banner(msg, sub, "#2f9e56");
     if(scene==="over")     banner(msg, sub, "#ffb703");
     drawStatusStrip();
