@@ -262,14 +262,10 @@ function endStick(e){
       const mb = musicBtn();
       if(p.x>mb.x && p.x<mb.x+mb.w && p.y>mb.y && p.y<mb.y+mb.h){
         MUS.on = !MUS.on; S.ui();                    // just the toggle — don't start yet
-      } else {
-        const b = titleBtns().find(b => p.x>b.x && p.x<b.x+b.w && p.y>b.y && p.y<b.y+b.h);
-        mode = b ? b.mode : "solo";
-        S.ui(); startGame();
-      }
+      } else { S.ui(); startGame(); }
     }
-    else if(scene==="over" || readyWait){ confirm_(); }
-    else tapPeg = 0.22;                   // "peg him!" — held briefly so it can't be missed
+    else if(scene==="over" || scene==="intro"){ confirm_(); }
+    else if(!humanWatch()) tapPeg = 0.22;  // "peg him!" — held briefly so it can't be missed
   }
   stick.on = false; stick.id = null; stick.dx = stick.dy = stick.mag = 0;
 }
@@ -313,25 +309,25 @@ function furn(fx, fy, w, h, kind){
   return {x: fx*W - fw/2, y: FLOOR_TOP + fy*(H-FLOOR_TOP) - fh/2, w:fw, h:fh, kind};
 }
 const FURNITURE = PORTRAIT ? [
-  // a long galley kitchen — eight pockets of cover between you and the sink
-  furn(0.14, 0.07, 92, 74, "plant"),
-  furn(0.82, 0.11, 98, 70, "basket"),
-  furn(0.46, 0.24, 236, 60, "table"),
-  furn(0.13, 0.37, 90, 56, "chair"),
-  furn(0.80, 0.43, 126, 56, "rug"),
-  furn(0.30, 0.55, 98, 70, "basket"),
-  furn(0.85, 0.64, 92, 74, "plant"),
-  furn(0.29, 0.75, 196, 60, "table"),
-  furn(0.76, 0.84, 126, 54, "rug")
+  // A galley kitchen you have to weave through. Every piece is SOLID — you walk
+  // around it, not through it — and each one casts a hiding pocket behind it.
+  // They alternate sides so there's always a way past, but never a straight run.
+  furn(0.30, 0.16, 196, 56, "table"),
+  furn(0.85, 0.32,  84, 68, "plant"),
+  furn(0.20, 0.49,  96, 66, "basket"),
+  furn(0.79, 0.66,  88, 54, "chair"),
+  furn(0.33, 0.83, 178, 56, "table")
 ] : [
-  {x:300, y:322, w:310, h:66, kind:"table"},
-  {x: 78, y:288, w: 96, h:78, kind:"plant"},
-  {x:790, y:330, w:104, h:74, kind:"basket"},
-  {x:150, y:452, w: 96, h:60, kind:"chair"},
-  {x:706, y:462, w:110, h:56, kind:"rug"}
+  {x:300, y:300, w:280, h:60, kind:"table"},
+  {x: 70, y:392, w: 92, h:74, kind:"plant"},
+  {x:768, y:360, w: 98, h:66, kind:"basket"},
+  {x:430, y:466, w: 96, h:56, kind:"chair"}
 ];
-// standing in the shaded pocket behind a piece of furniture = invisible
-FURNITURE.forEach(f => f.hide = {x:f.x-10*SC, y:f.y+f.h-14*SC, w:f.w+20*SC, h:64*SC});
+// the pocket behind a piece (further from the sink) is where you're invisible
+FURNITURE.forEach(f => {
+  f.solid = {x:f.x-4*SC, y:f.y+10*SC, w:f.w+8*SC, h:f.h-6*SC};
+  f.hide  = {x:f.x-8*SC, y:f.y+f.h+2*SC, w:f.w+16*SC, h:54*SC};
+});
 
 function hiddenAt(x,y){
   for(const f of FURNITURE){
@@ -339,6 +335,21 @@ function hiddenAt(x,y){
     if(x>h.x && x<h.x+h.w && y>h.y && y<h.y+h.h) return f;
   }
   return null;
+}
+// solid: a character's feet can't enter a piece of furniture
+function blockedAt(x,y){
+  for(const f of FURNITURE){
+    const s = f.solid;
+    if(x>s.x && x<s.x+s.w && y>s.y && y<s.y+s.h) return f;
+  }
+  return null;
+}
+// move with sliding — running into a table edge slides you along it
+function moveWithCollision(ch, dx, dy){
+  const nx = Math.max(28*SC, Math.min(W-28*SC, ch.x + dx));
+  if(!blockedAt(nx, ch.y)) ch.x = nx;
+  const ny = Math.max(SINK_Y+2, Math.min(H-26*SC, ch.y + dy));
+  if(!blockedAt(ch.x, ny)) ch.y = ny;
 }
 
 /* ---------- characters ---------- */
@@ -372,74 +383,70 @@ let paused = false;
 let aiThink = 0, aiSkill = 0.5, aiPause = 0;
 
 /* ---------- match structure ----------
-   A ROUND is first-to-5 pegs. You play two rounds so each player gets
-   a go at sneaking first — then 1–1 goes to a "Golden Peg" decider.  */
-let mode = "solo";                 // "solo" = vs AI Shonty, "duo" = pass-and-play
-let round = 1;                     // 1, 2, or 3 (the decider)
-let target = 5;                    // pegs needed to take the round
-let wins = {Cushla:0, Shonty:0};
-let readyWait = false;             // duo mode: hold the turn card until they swap
-const TARGET = 5;
+   One player, always doing something. Your turn: sneak up and peg Shonty —
+   TWO pegs and the turn passes. His turn: YOU'RE on the dishes, and you
+   choose when to spin round and try to catch him. First to five wins.   */
+const TARGET   = 5;    // pegs to win the whole game
+const PER_TURN = 2;    // successful pegs before the turn passes over
+let target = TARGET;
+let turnPegs = 0;      // pegs placed so far this turn
+let readyWait = false;
 
-const nameOf = c => c.who;
-const humanTurn = () => mode==="duo" || sneaker===cushla;
-const roundName = () => round===3 ? "Golden Peg decider" : "Round "+round;
+// the player IS Cushla: sneaking on her turn, on dish duty on his
+const humanTurn  = () => sneaker === cushla;   // player is the one sneaking
+const humanWatch = () => washer  === cushla;   // player is on the dishes
 
 /* ---------- flow ---------- */
-function startGame(){                 // brand new match
-  wins = {Cushla:0, Shonty:0};
-  round = 1;
-  startRound(cushla);                 // round 1: Cushla sneaks first
-}
-function startRound(starter){
-  target = (round===3) ? 3 : TARGET;
+function startGame(){
   cushla.pegsOn = []; shonty.pegsOn = [];
   floorPegs = [];
-  sneaker = starter; washer = (starter===cushla) ? shonty : cushla;
+  sneaker = cushla; washer = shonty;           // Cushla sneaks first
   beginTurn(true);
 }
-function roundOver(winner){
-  wins[winner.who]++;
-  scene = "gamewin"; sceneT = 0; readyWait = true;
+function gameOver(winner){
+  scene = "over"; sceneT = 0; readyWait = false;
   S.win();
   for(let i=0;i<170;i++) confetti.push({x:Math.random()*W,y:-Math.random()*H,vy:60+Math.random()*180,vx:(Math.random()-.5)*60,r:Math.random()*6+3,rot:Math.random()*6,vr:(Math.random()-.5)*8,col:PEG_COLS[i%PEG_COLS.length]});
-  const champ = wins[winner.who] >= 2 || round === 3;
-  if(champ){
-    scene = "over"; readyWait = false;
-    msg = winner.who + " is the Peg Champion! 🏆";
-    sub = "Rounds won — Cushla " + wins.Cushla + ", Shonty " + wins.Shonty + ". "
-        + (TOUCH ? "Tap to play again." : "Press ENTER to play again.");
-  } else {
-    msg = winner.who + " takes " + roundName() + "! 🎉";
-    const nextStarter = (round===1) ? shonty : ((wins.Cushla > wins.Shonty) ? shonty : cushla);
-    sub = (round===1)
-      ? "Now Round 2 — this time Shonty sneaks first, so it's all fair and square."
-      : "One round each! Time for the Golden Peg decider — first to 3.";
-    pendingRound = { n: round+1, starter: nextStarter };
-  }
+  msg = (winner===cushla ? "You win! 🏆" : "Shonty wins! 🧦");
+  sub = (winner===cushla
+      ? "Five pegs on Shonty and he never felt a thing."
+      : "He got five on you. Rematch?")
+    + (TOUCH ? " Tap to play again." : " Press ENTER to play again.");
 }
-let pendingRound = null;
+// the turn passes: after PER_TURN pegs, or the moment someone's caught
+function passTurn(){
+  sneaker = (sneaker===cushla) ? shonty : cushla;
+  washer  = (washer ===cushla) ? shonty : cushla;
+  beginTurn(false);
+}
 let floorPegs = [];      // pegs that have pinged off and are lying on the floor
 let fallers = [];        // …while they're still tumbling through the air
 
 function beginTurn(first){
   resetPositions();
+  turnPegs = 0;
   scene = "intro"; sceneT = 0;
-  readyWait = (mode==="duo");
-  msg = sneaker.who + "'s turn to sneak!";
-  sub = sneaker === cushla
-      ? "Creep up behind Shonty and peg him — freeze or hide when he looks!"
-      : (mode==="duo" ? "Player 2 — sneak up on Cushla and peg her!"
-                      : "Uh oh… Shonty's coming for YOU. (watch out!)");
-  if(first) sub = roundName() + " — sneak up behind " + washer.who
-                + " and clip a peg on. First to " + target + " takes the round!";
-  if(mode==="duo") sub += "  (pass the " + (TOUCH?"phone":"keyboard") + " over!)";
+  readyWait = false;
+  if(sneaker === cushla){
+    msg = "Your turn to sneak!";
+    sub = "Creep up behind Shonty and peg him. Freeze or hide when he looks — "
+        + PER_TURN + " pegs and it's his go.";
+  } else {
+    msg = "You're on the dishes!";
+    sub = TOUCH
+      ? "Shonty's sneaking up on you. HOLD anywhere to spin round and catch him — but you can't watch forever."
+      : "Shonty's sneaking up on you. HOLD SPACE to spin round and catch him — but you can't watch forever.";
+  }
+  if(first) sub = "Sneak up behind Shonty and clip a peg on his back. "
+                + PER_TURN + " pegs and it's his turn. First to " + target + " wins!";
 }
 function resetPositions(){
   sneaker.x = START.x; sneaker.y = START.y; sneaker.facing = 0; sneaker.turnT = 0;
   sneaker.hasPeg = true;
   washer.x = W/2; washer.y = SINK_Y; washer.facing = 0; washer.turnT = 0;
   LOOK.mode = "wash"; LOOK.t = 0; LOOK.dur = 2.6; LOOK.warn = false; LOOK.drift = 0;
+  LOOK._pinged = false;
+  peekE = 1; peekHeld = false;
   aiThink = 0; aiPause = 0.6;
   aiSkill = 0.42 + Math.random()*0.3;
 }
@@ -451,16 +458,9 @@ function confirm_(){
   S.ui();
   if(scene==="title"){ startGame(); return; }
   if(scene==="over"){ confetti=[]; scene="title"; sceneT=0; return; }
-  if(scene==="gamewin" && readyWait && pendingRound){
-    confetti=[]; round = pendingRound.n;
-    const st = pendingRound.starter; pendingRound = null; readyWait = false;
-    startRound(st); return;
-  }
-  if(scene==="intro" && readyWait){ readyWait = false; scene="play"; sceneT=0; return; }
+  if(scene==="intro"){ readyWait = false; scene="play"; sceneT=0; return; }
 }
 function onKey(k){
-  if(k==="1" && scene==="title"){ mode="solo"; S.ui(); startGame(); return; }
-  if(k==="2" && scene==="title"){ mode="duo";  S.ui(); startGame(); return; }
   if(k==="enter"){ confirm_(); return; }
   if(k==="p" || k==="escape"){
     if(inMatch()){ paused = !paused; S.ui(); }
@@ -482,8 +482,50 @@ function pace(){
   return Math.max(0.55, 1 - total*0.055);
 }
 
-/* ---------- the washer's look cycle ---------- */
+/* ---------- YOUR turn on the dishes ----------
+   You decide when to spin round. You can't watch forever: peeking drains a
+   meter, washing refills it, and when it runs dry you're spun back to the
+   sink. That's the tension — peek too early and he just freezes; peek too
+   late and he's already clipped a peg on you.                            */
+let peekE = 1;            // 1 = full, 0 = empty
+let peekHeld = false;
+const PEEK_DRAIN = 1/2.1, PEEK_REFILL = 1/2.6, PEEK_MIN = 0.22;
+
+function updatePlayerLook(dt){
+  LOOK.drift += dt;
+  washer.x = W/2 + Math.sin(LOOK.drift*0.5)*(PORTRAIT?54:66);
+
+  const wants = peekHeld && peekE > 0.01;
+  // once you're spun round you keep looking until you let go or run dry
+  const looking = (LOOK.mode==="look" || LOOK.mode==="turnF")
+    ? wants
+    : (wants && peekE >= PEEK_MIN);
+
+  if(looking){
+    peekE = Math.max(0, peekE - PEEK_DRAIN*dt);
+    if(LOOK.mode==="wash"){ LOOK.mode="turnF"; LOOK.t=0; LOOK.dur=0.22; S.peek(); }
+    else if(LOOK.mode==="turnF"){
+      LOOK.t += dt; washer.turnT = LOOK.t/LOOK.dur;
+      if(LOOK.t>=LOOK.dur){ LOOK.mode="look"; washer.turnT=1; }
+    }
+  } else {
+    peekE = Math.min(1, peekE + PEEK_REFILL*dt);
+    if(LOOK.mode==="look" || LOOK.mode==="turnF"){ LOOK.mode="turnB"; LOOK.t=0; LOOK.dur=0.22; }
+    else if(LOOK.mode==="turnB"){
+      LOOK.t += dt; washer.turnT = 1 - LOOK.t/LOOK.dur;
+      if(LOOK.t>=LOOK.dur){ LOOK.mode="wash"; washer.turnT=0; }
+    }
+  }
+  LOOK.warn = false;
+  washer.facing = (LOOK.mode==="look") ? 1 : washer.turnT;
+  if(LOOK.mode==="wash" && Math.random()<0.35){
+    bubbles.push({x:washer.x-20+Math.random()*40, y:SINK_Y-92, r:2+Math.random()*5, vy:-14-Math.random()*22, vx:(Math.random()-.5)*10, life:1.6});
+  }
+}
+
+/* ---------- the AI washer's look cycle (your sneaking turn) ---------- */
 function updateLook(dt){
+  if(humanWatch()){ updatePlayerLook(dt); return; }
   const p = pace();
   LOOK.t += dt;
   LOOK.drift += dt;
@@ -537,12 +579,20 @@ function placePeg(){
   for(let i=0;i<22;i++) sparks.push({x:washer.x,y:washer.y-70,vx:(Math.random()-.5)*260,vy:-Math.random()*220-40,life:0.8,col:pal[i%pal.length]});
   for(let i=0;i<4;i++) hearts.push({x:washer.x+(Math.random()-.5)*40,y:washer.y-90,vy:-40,life:1.2});
   flash = 0.35;
+  turnPegs++;
   if(washer.pegsOn.length >= target){
-    roundOver(sneaker);
+    gameOver(sneaker);
+  } else if(turnPegs >= PER_TURN){
+    // two pegs is a turn — hand over
+    scene = "roundwin"; sceneT = 0;
+    msg = sneaker===cushla ? "Two pegs — nice one!" : "He got his two.";
+    sub = sneaker===cushla
+        ? "That's your turn done. Now you're on the dishes…"
+        : "Your turn to sneak again!";
   } else {
     scene = "roundwin"; sceneT = 0;
-    msg = "PEGGED! +1 for " + sneaker.who + "!";
-    sub = "Now tiptoe all the way back to the peg basket for another one…";
+    msg = "PEGGED! " + (sneaker===cushla ? "That's one to you." : "One to Shonty.");
+    sub = "Back to the peg basket for another — " + (PER_TURN-turnPegs) + " more this turn.";
     // he's happily scrubbing again — a little grace before the next look
     LOOK.mode="wash"; LOOK.t=0; LOOK.dur=2.2*pace(); LOOK.warn=false; LOOK._pinged=false;
     washer.turnT=0; washer.facing=0;
@@ -555,7 +605,7 @@ function getCaught(){
   shake = 0.6;
   for(let i=0;i<18;i++) sparks.push({x:sneaker.x,y:sneaker.y-46,vx:(Math.random()-.5)*300,vy:-Math.random()*180-30,life:0.7,col:"#ffd93d"});
   S.snap(); setTimeout(()=>S.ow(), 140);
-  msg = "SNAP! Caught you!";
+  msg = sneaker===cushla ? "SNAP! He caught you!" : "GOTCHA! You caught him!";
   sub = sneaker.who + "'s undies got a twang — \"OW!\"";
 
   // the jolt shakes one of your pegs clean off him — there goes a point!
@@ -573,6 +623,8 @@ function getCaught(){
 }
 
 function updatePlay(dt){
+  // when it's YOUR turn on the dishes, hold to spin round
+  if(humanWatch()) peekHeld = down(" ") || stick.on;
   updateLook(dt);
 
   // ----- movement -----
@@ -596,8 +648,7 @@ function updatePlay(dt){
   sneaker.moving = (mx||my) ? true : false;
   if(mx) sneaker.dir = mx>0 ? 1 : -1;
 
-  sneaker.x = Math.max(48, Math.min(W-48, sneaker.x + sneaker.vx*dt));
-  sneaker.y = Math.max(SINK_Y+2, Math.min(H-30, sneaker.y + sneaker.vy*dt));
+  moveWithCollision(sneaker, sneaker.vx*dt, sneaker.vy*dt);
 
   if(sneaker.moving){
     const was = Math.floor(sneaker.walk);
@@ -653,8 +704,17 @@ function aiMove(dt){
   const d = toward(goal.x, goal.y);
   return {x:d.x, y:d.y, peg:false};
 }
+// Steer toward a goal, fanning out around furniture rather than shoving into it.
 function toward(tx,ty){
   const dx=tx-sneaker.x, dy=ty-sneaker.y, l=Math.hypot(dx,dy)||1;
+  const base = Math.atan2(dy,dx);
+  const probe = 34*SC;
+  // try straight on, then progressively wider angles either side
+  for(const off of [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2]){
+    const a = base + off;
+    const px = sneaker.x + Math.cos(a)*probe, py = sneaker.y + Math.sin(a)*probe;
+    if(!blockedAt(px, py) && px>28*SC && px<W-28*SC) return {x:Math.cos(a), y:Math.sin(a)};
+  }
   return {x:dx/l, y:dy/l};
 }
 
@@ -1021,10 +1081,10 @@ function drawHUD(){
     // row 1: round + rounds won, with the pause button on the right
     const b = pauseBtn();
     ctx.textAlign="left"; ctx.textBaseline="middle";
-    ctx.fillStyle="#8a5a2a"; ctx.font=fnt(13, true);
-    ctx.fillText(roundName(), 12*SC, top + 13*SC);
-    ctx.textAlign="right";
-    ctx.fillText("rounds  " + wins.Cushla + "–" + wins.Shonty, b.x - b.r - 10*SC, top + 13*SC);
+    ctx.fillStyle= sneaker===cushla ? "#e63946" : "#2fa8a0"; ctx.font=fnt(13, true);
+    ctx.fillText(sneaker===cushla ? "▶ you're sneaking" : "▶ you're on the dishes", 12*SC, top + 13*SC);
+    ctx.textAlign="right"; ctx.fillStyle="#8a5a2a";
+    ctx.fillText("peg " + Math.min(turnPegs+1, PER_TURN) + " of " + PER_TURN, b.x - b.r - 10*SC, top + 13*SC);
 
     // row 2: the two scoreboards side by side
     const gap = 8*SC, cw = (W - 20*SC - gap)/2, ry = top + 28*SC;
@@ -1042,7 +1102,8 @@ function drawHUD(){
     ctx.fillStyle="rgba(255,255,255,.85)";
     roundRect(W/2-110, 12, 220, 26, 13, true, false);
     ctx.fillStyle="#8a5a2a"; ctx.font="bold 14px Comic Sans MS, Arial";
-    ctx.fillText(roundName() + "  •  rounds " + wins.Cushla + "–" + wins.Shonty, W/2, 17);
+    ctx.fillText((sneaker===cushla ? "You're sneaking" : "You're on the dishes")
+               + "  •  peg " + Math.min(turnPegs+1, PER_TURN) + " of " + PER_TURN, W/2, 17);
   }
   // pause button (both layouts)
   const b = pauseBtn();
@@ -1194,19 +1255,42 @@ function drawPegBox(t){
 function drawStatusStrip(){
   if(!PORTRAIT || scene!=="play") return;
   let text, col;
-  if(isWatching()){ text = "👀  HE'S LOOKING — FREEZE!"; col = "#e63946"; }
-  else if(LOOK.warn || LOOK.mode==="turnF"){ text = "❓  he's about to turn…"; col = "#ff8b3d"; }
-  else if(!sneaker.hasPeg){ text = "🧺  out of pegs — back to the basket"; col = "#c9772a"; }
-  else return;
-  if(isWatching() && washer !== shonty) text = "👀  SHE'S LOOKING — FREEZE!";
+  if(humanWatch()){
+    // your turn on the dishes
+    if(isWatching()){ text = "👀  LOOKING — catch him moving!"; col = "#e63946"; }
+    else if(peekE < PEEK_MIN){ text = "🫧  keep washing… get your breath back"; col = "#4d96ff"; }
+    else { text = TOUCH ? "🫧  washing up — HOLD to spin round" : "🫧  washing up — HOLD SPACE to spin round"; col = "#2fa8a0"; }
+  } else {
+    if(isWatching()){ text = "👀  HE'S LOOKING — FREEZE!"; col = "#e63946"; }
+    else if(LOOK.warn || LOOK.mode==="turnF"){ text = "❓  he's about to turn…"; col = "#ff8b3d"; }
+    else if(!sneaker.hasPeg){ text = "🧺  out of pegs — back to the basket"; col = "#c9772a"; }
+    else return;
+  }
   const h = 34*SC, y = HUD_H + 6*SC;
   ctx.save();
   ctx.globalAlpha = 0.94;
   ctx.fillStyle = col; roundRect(8*SC, y, W-16*SC, h, 12*SC, true, false);
   ctx.globalAlpha = 1;
-  ctx.fillStyle="#fff"; ctx.font=fnt(15, true);
+  ctx.fillStyle="#fff"; ctx.font=fnt(14, true);
   ctx.textAlign="center"; ctx.textBaseline="middle";
   ctx.fillText(text, W/2, y + h/2 + 1);
+  ctx.restore();
+}
+
+/* the peek meter — how long you can keep watching before you must wash */
+function drawPeekMeter(){
+  if(scene!=="play" || !humanWatch()) return;
+  const w = Math.min(240, W*0.56), h = 16*SC;
+  const x = W/2 - w/2, y = washer.y + 34*SC;
+  ctx.save();
+  ctx.fillStyle="rgba(255,255,255,.85)"; roundRect(x-3,y-3,w+6,h+6,(h+6)/2,true,false);
+  ctx.fillStyle="rgba(0,0,0,.10)"; roundRect(x,y,w,h,h/2,true,false);
+  const lo = peekE < PEEK_MIN;
+  ctx.fillStyle = lo ? "#ff8b3d" : (isWatching() ? "#e63946" : "#2fa8a0");
+  if(peekE > 0.02) roundRect(x,y,Math.max(h,w*peekE),h,h/2,true,false);
+  ctx.fillStyle = "#6b5442"; ctx.font = fnt(10, true);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(lo ? "catching your breath" : "how long you can look", W/2, y+h/2+1);
   ctx.restore();
 }
 
@@ -1282,23 +1366,31 @@ function drawSnapFx(){
 
 /* ---------- title ---------- */
 const TITLE_LINES = TOUCH ? [
-  "🧺  Someone's at the sink doing dishes.",
-  "👆  Swipe & hold to creep up behind them.",
-  "✋  Let go to freeze the second they turn,",
-  "      or hide in a shaded pocket.",
-  "🎨  Tap right behind them to peg them. +1!",
+  "YOUR TURN — sneaking",
+  "👆  Swipe & hold to creep up behind Shonty.",
+  "✋  Let go to freeze when he spins round,",
+  "      or duck into a shaded pocket.",
+  "🎨  Tap right behind him to clip a peg on.",
+  "",
+  "HIS TURN — you're on the dishes",
+  "🫧  HOLD anywhere to spin round and",
+  "      catch him moving — but not for long!",
+  "",
   "😖  Caught? SNAP — and a peg falls off.",
-  "🧺  Back to the basket for each new peg.",
-  "🏆  First to 5 wins. Best of two rounds."
+  "🏆  2 pegs ends a turn. First to 5 wins."
 ] : [
-  "🧺  Shonty is doing the dishes. Sneak up behind him…",
-  "🎨  …and SPACE to clip a colourful peg on his back. +1 point!",
-  "👀  He looks around a lot. When he does: STOP MOVING, or hide",
-  "      in the shady pocket behind the table, plant, chair or basket.",
-  "😖  Caught? He twangs your undies — SNAP! — and a peg pings off!",
-  "🧺  Out of pegs? Sneak all the way back to the basket for another.",
-  "🏆  First to " + TARGET + " takes the round. You play two rounds so each",
-  "      of you gets to sneak first — then a Golden Peg decider if it's 1–1."
+  "YOUR TURN — sneaking",
+  "🧺  Shonty's at the sink. Creep up behind him with the arrow keys,",
+  "      and press SPACE right behind him to clip a peg on.",
+  "👀  When he spins round: STOP MOVING, or hide in the shaded",
+  "      pocket behind the table, plant, basket or chair.",
+  "",
+  "HIS TURN — you're on the dishes",
+  "🫧  Now YOU choose when to look. HOLD SPACE to spin round and",
+  "      catch him moving — but you can't watch forever.",
+  "",
+  "😖  Caught either way? SNAP go the undies, and a peg pings off.",
+  "🏆  Two pegs ends a turn. First to " + TARGET + " pegs wins."
 ];
 // the card is sized from its contents so it can never overflow a small screen
 function titleCard(){
@@ -1315,13 +1407,9 @@ function musicBtn(){
 }
 function titleBtns(){
   const c = titleCard();
-  const h = PORTRAIT ? 62 : 56, y = c.by + c.bh - h - (PORTRAIT ? 42 : 32);
-  const gap = 14, bw = Math.min(280, (c.bw - 36 - gap)/2);
-  const x0 = c.bx + (c.bw - (bw*2+gap))/2;
-  return [
-    {x:x0,          y, w:bw, h, label:"1 PLAYER",  sub:"you vs Shonty",     mode:"solo"},
-    {x:x0+bw+gap,   y, w:bw, h, label:"2 PLAYERS", sub:"pass & play",       mode:"duo"}
-  ];
+  const h = PORTRAIT ? 64 : 56, y = c.by + c.bh - h - (PORTRAIT ? 42 : 32);
+  const bw = Math.min(300, c.bw - 60);
+  return [{x: c.bx + (c.bw-bw)/2, y, w:bw, h, label:"PLAY", sub:"first to five pegs"}];
 }
 function drawTitle(t){
   ctx.fillStyle="rgba(0,0,0,.30)"; ctx.fillRect(0,0,W,H);
@@ -1385,16 +1473,15 @@ function frame(now){
   if(paused){ /* everything frozen — just keep rendering */ }
   else if(scene==="play") updatePlay(dt);
   else if(scene==="intro"){ updateLook(dt); if(!readyWait && sceneT>2.0){ scene="play"; sceneT=0; } }
-  else if(scene==="caught"){
-    if(sceneT>3.6){
-      sneaker = (sneaker===cushla) ? shonty : cushla;
-      washer  = (washer===cushla)  ? shonty : cushla;
-      beginTurn(false);
+  // caught = your turn is over either way
+  else if(scene==="caught"){ if(sceneT>3.6) passTurn(); }
+  // two pegs ends the turn; otherwise sneak back to the basket yourself
+  else if(scene==="roundwin"){
+    if(sceneT>1.7){
+      if(turnPegs >= PER_TURN) passTurn();
+      else { scene="play"; sceneT=0; }
     }
   }
-  // no teleport home — you have to sneak back to the basket yourself
-  else if(scene==="roundwin"){ if(sceneT>1.6){ scene="play"; sceneT=0; } }
-  else if(scene==="gamewin" && !readyWait && sceneT>2.4){ confirm_(); }
   updateFx(dt);
 
   // ---- render ----
@@ -1478,15 +1565,16 @@ function frame(now){
     // let the SNAP + squeal play out in full before the popup covers it
     if(scene==="caught" && sceneT>1.9) banner(msg, sub, "#e63946");
     if(scene==="roundwin") banner(msg, sub, "#2f9e56");
-    if(scene==="gamewin")  banner(msg, sub, "#2f9e56");
     if(scene==="over")     banner(msg, sub, "#ffb703");
     drawStatusStrip();
+    drawPeekMeter();
     if(scene==="play" && humanTurn()) drawStick();
     if(!TOUCH){
       ctx.fillStyle="rgba(90,50,20,.5)"; ctx.font="13px Arial"; ctx.textAlign="right";
       ctx.fillText((muted?"muted • ":"") + (MUS.on?"":"music off • ") + "P pause • R restart", W-20, H-14);
-    } else if(scene==="play" && humanTurn() && !stick.on){
-      const txt = "swipe & hold to sneak  •  let go to freeze";
+    } else if(scene==="play" && !stick.on){
+      const txt = humanWatch() ? "hold anywhere to spin round  •  let go to wash"
+                               : "swipe & hold to sneak  •  let go to freeze";
       ctx.font = fnt(14, true); ctx.textAlign="center"; ctx.textBaseline="middle";
       const w = ctx.measureText(txt).width + 26*TS, h = 30*TS, y = H - h/2 - 10*SC;
       ctx.fillStyle="rgba(255,255,255,.82)";

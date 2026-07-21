@@ -9,31 +9,47 @@ undies get twanged, one of your pegs pings off, and it's the other player's turn
 It's one self-contained HTML file. No installing, no build step, no internet
 needed — just open `index.html`.
 
-## How to play
-
-| | |
-|---|---|
-| **Sneak** | Arrow keys or WASD. On a phone, **swipe and hold** — the further you drag, the faster you creep. |
-| **Freeze** | Let go of everything. On a phone, lift your finger. |
-| **Peg them** | **Space** when you're right behind them. On a phone, **tap**. |
-| **Pause** | **P** or **Esc**, or the ⏸ button in the corner. |
-| **Restart** | **R** |
-| **Music / mute** | **N** for music (off by default), **M** to mute everything. |
-
 ## The rules
 
-- Sneak up behind whoever's at the sink and clip a peg on them. **One point each.**
-- They stop scrubbing and **look around** at random. A `?` bubble warns you just
-  before they turn. While they're looking you must **stand perfectly still**, or be
-  tucked in one of the shaded pockets behind the table, pot plant, chair or basket.
-- Move while they're watching and you're caught: **SNAP** go the undies, "ow!",
-  and **one of your pegs falls off**. Then it's their turn to sneak.
-- You only carry **one peg at a time** — after each one, tiptoe all the way back to
-  the peg basket for another.
-- **First to five pegs takes the round.** You play two rounds so each player gets a
-  turn sneaking first, and if it ends 1–1 there's a **Golden Peg decider** (first to three).
+You're always the one playing — the turn just flips between two jobs.
 
-Play solo against the computer, or two players passing one keyboard or phone.
+### Your turn: sneaking
+
+Shonty's at the sink. Creep up behind him and clip a peg on his back.
+
+- He stops scrubbing and **looks around**. A `?` bubble warns you just before he turns.
+- While he's looking you must **stand perfectly still**, or be tucked in one of the
+  shaded pockets behind the furniture. Move in the open and he's got you.
+- You carry **one peg at a time** — after each one, tiptoe back to the basket for another.
+- **Two pegs and your turn's over.**
+
+### His turn: you're on the dishes
+
+Now Shonty's creeping up on *you*, and **you** decide when to spin round and catch him.
+
+- **Hold** to turn from the sink and look. Catch him moving in the open and he's caught.
+- You can't watch forever — looking drains a meter, washing refills it. Spin round too
+  early and he just freezes; too late and he's already clipped a peg on you.
+
+### Either way
+
+Get caught and it's **SNAP** go the undies, an "ow!", and **one of your pegs falls off**
+and clatters to the floor. **First to five pegs wins.**
+
+## Controls
+
+| | Phone | Keyboard |
+|---|---|---|
+| **Sneak** | Swipe and hold — drag further to move faster | Arrows or WASD |
+| **Freeze** | Lift your finger | Let go of the keys |
+| **Peg them** | Tap | Space |
+| **Look round** (dish duty) | Hold anywhere | Hold Space |
+| **Pause** | ⏸ button, top right | P or Esc |
+| **Restart** | Pause menu | R |
+| **Music / mute** | Title screen, or pause menu | N music (off by default), M mute |
+
+The furniture is solid — you have to weave around it, which is what makes the room
+worth crossing carefully.
 
 ## The cast
 
