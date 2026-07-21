@@ -1160,31 +1160,34 @@ function updateAtmosphere(dt){
     if(s2.life <= 0) steam.splice(i,1);
   }
 }
+/* Soft morning light on the FLOOR — drawn early, underneath the characters,
+   so it can never wash out a speech bubble or a label the way an overlay did. */
 function drawSunbeam(){
   if(!FANCY) return;
-  const cTop = FLOOR_TOP - 58;
   const ww = Math.min(240, W*0.52), wx = W/2-ww/2;
   const wy = PORTRAIT ? HUD_H + 46*SC : 18;
   ctx.save();
-  ctx.globalCompositeOperation = "lighter";
   const g = ctx.createLinearGradient(wx, wy, wx+ww*0.4, H);
-  g.addColorStop(0,"rgba(255,236,170,.30)");
-  g.addColorStop(0.45,"rgba(255,225,150,.13)");
-  g.addColorStop(1,"rgba(255,215,140,0)");
+  g.addColorStop(0,"rgba(255,244,206,.13)");
+  g.addColorStop(0.45,"rgba(255,238,190,.055)");
+  g.addColorStop(1,"rgba(255,232,175,0)");
   ctx.fillStyle = g;
   ctx.beginPath();
   ctx.moveTo(wx+6, wy+8); ctx.lineTo(wx+ww-6, wy+8);
   ctx.lineTo(wx+ww*1.35, H); ctx.lineTo(wx-ww*0.30, H);
   ctx.closePath(); ctx.fill();
   ctx.restore();
-  // dust turning in the light
+}
+// dust is the one bit worth keeping in front — it's tiny and reads as air
+function drawDust(){
+  if(!FANCY) return;
+  const ww = Math.min(240, W*0.52), wx = W/2-ww/2;
   ctx.save();
   for(const d of dust){
-    const inBeam = d.x > wx-ww*0.30 && d.x < wx+ww*1.35;
-    if(!inBeam) continue;
-    ctx.globalAlpha = 0.20 + Math.sin(d.ph)*0.16;
-    ctx.fillStyle = "#fff6d5";
-    ctx.beginPath(); ctx.arc(d.x + Math.sin(d.ph)*5, d.y, d.r, 0, 7); ctx.fill();
+    if(d.x < wx-ww*0.30 || d.x > wx+ww*1.35) continue;
+    ctx.globalAlpha = 0.10 + Math.sin(d.ph)*0.07;
+    ctx.fillStyle = "#fff8e2";
+    ctx.beginPath(); ctx.arc(d.x + Math.sin(d.ph)*5, d.y, d.r*0.8, 0, 7); ctx.fill();
   }
   ctx.restore();
 }
@@ -1192,24 +1195,20 @@ function drawSteam(){
   if(!FANCY) return;
   ctx.save();
   for(const s2 of steam){
-    ctx.globalAlpha = Math.max(0, s2.life)*0.30;
+    ctx.globalAlpha = Math.max(0, s2.life)*0.20;
     ctx.fillStyle = "#ffffff";
     ctx.beginPath(); ctx.arc(s2.x, s2.y, s2.r, 0, 7); ctx.fill();
   }
   ctx.restore();
 }
+/* Just a gentle vignette. The warm "overlay" wash that used to be here
+   flattened contrast across the whole screen and made text hard to read. */
 function drawGrade(){
   if(!FANCY) return;
   ctx.save();
-  // warm afternoon wash
-  ctx.globalCompositeOperation = "overlay";
-  ctx.fillStyle = "rgba(255,190,120,.13)";
-  ctx.fillRect(0,0,W,H);
-  ctx.globalCompositeOperation = "source-over";
-  // vignette, keeping the middle bright
-  const v = ctx.createRadialGradient(W/2, H*0.48, Math.min(W,H)*0.30, W/2, H*0.5, Math.max(W,H)*0.72);
+  const v = ctx.createRadialGradient(W/2, H*0.48, Math.min(W,H)*0.34, W/2, H*0.5, Math.max(W,H)*0.75);
   v.addColorStop(0,"rgba(60,30,10,0)");
-  v.addColorStop(1,"rgba(60,30,10,.30)");
+  v.addColorStop(1,"rgba(60,30,10,.16)");
   ctx.fillStyle = v; ctx.fillRect(0,0,W,H);
   ctx.restore();
 }
@@ -2046,6 +2045,9 @@ function frame(now){
     roundRect(f.hide.x, f.hide.y, f.hide.w, f.hide.h, 16, true, false);
   });
 
+  drawSunbeam();
+  drawSteam();
+
   if(scene!=="title"){
     // depth sort: washer is always at the sink (top), sneaker + furniture sort by y
     const items = [];
@@ -2103,8 +2105,7 @@ function frame(now){
 
   drawSnapFx();
   drawFx();
-  drawSteam();
-  drawSunbeam();
+  drawDust();
   ctx.restore();
   drawGrade();
 
