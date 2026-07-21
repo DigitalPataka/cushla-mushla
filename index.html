@@ -457,7 +457,7 @@ let paused = false;
 let aiThink = 0, aiSkill = 0.5, aiPause = 0;
 // How long Shonty keeps moving after you spin round — your window to catch him.
 // Deliberately generous: without it he'd freeze instantly and be uncatchable.
-const AI_REACT = 0.45;
+const AI_REACT = 0.55;
 let aiReact = AI_REACT;
 const AI_SPEED = 0.66;        // he creeps; you're quicker than he is
 
@@ -615,7 +615,7 @@ function updatePlayerLook(dt){
       //Each spin costs a chunk up front, not just per-second. Without this,
       // machine-gunning tiny peeks is free and beats playing properly.
       peekE = Math.max(0, peekE - PEEK_COST);
-      LOOK.mode="turnF"; LOOK.t=0; LOOK.dur=0.22; S.peek();
+      LOOK.mode="turnF"; LOOK.t=0; LOOK.dur=0.15; S.peek();
     }
     else if(LOOK.mode==="turnF"){
       LOOK.t += dt; washer.turnT = LOOK.t/LOOK.dur;
@@ -623,7 +623,7 @@ function updatePlayerLook(dt){
     }
   } else {
     peekE = Math.min(1, peekE + PEEK_REFILL*dt);
-    if(LOOK.mode==="look" || LOOK.mode==="turnF"){ LOOK.mode="turnB"; LOOK.t=0; LOOK.dur=0.22; }
+    if(LOOK.mode==="look" || LOOK.mode==="turnF"){ LOOK.mode="turnB"; LOOK.t=0; LOOK.dur=0.15; }
     else if(LOOK.mode==="turnB"){
       LOOK.t += dt; washer.turnT = 1 - LOOK.t/LOOK.dur;
       if(LOOK.t>=LOOK.dur){ LOOK.mode="wash"; washer.turnT=0; }
@@ -670,7 +670,7 @@ const isWatching = () => LOOK.mode==="look";
 // A look has to actually LAND before it can catch anyone — otherwise flicking
 // round for a fraction of a second is as good as a proper look, and spamming
 // tiny peeks beats playing properly.
-const CATCH_MIN = 0.24;
+const CATCH_MIN = 0.17;
 const lookLanded = () => LOOK.mode==="look" && LOOK.seen > CATCH_MIN;
 
 /* ---------- gameplay ---------- */
@@ -705,14 +705,17 @@ function placePeg(){
   } else if(turnPegs >= PER_TURN){
     // two pegs is a turn — hand over
     scene = "roundwin"; sceneT = 0;
-    msg = sneaker===cushla ? "Two pegs — nice one!" : "He got his two.";
+    msg = sneaker===cushla ? "You pegged Shonty — that's two!" : "Shonty pegged you — that's two!";
     sub = sneaker===cushla
-        ? "That's your turn done. Now you're on the dishes…"
-        : "Your turn to sneak again!";
+        ? "Your turn's done. Back to the sink — now he's coming for you."
+        : "That's his turn done. Your turn to sneak up on him!";
   } else {
+    const left = PER_TURN - turnPegs;
     scene = "roundwin"; sceneT = 0;
-    msg = "PEGGED! " + (sneaker===cushla ? "That's one to you." : "One to Shonty.");
-    sub = "Back to the peg basket for another — " + (PER_TURN-turnPegs) + " more this turn.";
+    msg = sneaker===cushla ? "PEGGED! You got one on Shonty." : "PEGGED! Shonty got one on you.";
+    sub = sneaker===cushla
+        ? "Sneak back to the basket for another — " + left + " more this turn."
+        : "He's off to fetch another peg — he can get " + left + " more this turn.";
     // he's happily scrubbing again — a little grace before the next look
     LOOK.mode="wash"; LOOK.t=0; LOOK.dur=2.2*pace(); LOOK.warn=false; LOOK._pinged=false;
     washer.turnT=0; washer.facing=0;
@@ -917,16 +920,16 @@ function aiMove(dt){
   aiSinceWatch += dt;
   if(aiRest > 0){
     aiRest -= dt;
-    if(aiRest <= 0){ aiBurst = 0.55 + Math.random()*0.85; aiCover = null; }
+    if(aiRest <= 0){ aiBurst = 0.75 + Math.random()*0.95; aiCover = null; }
     return {x:0,y:0,peg:false};
   }
   if(aiBurst <= 0){
     // he watches YOUR rhythm: breaks cover just after you turn back to the sink
-    if(aiSinceWatch < 0.28){ return {x:0,y:0,peg:false}; }
+    if(aiSinceWatch < 0.28 && Math.random() < 0.7){ return {x:0,y:0,peg:false}; }
     // pick the next hop: a hiding pocket on the way, or straight on
     const cover = nearestCover();
     aiCover = (cover && cover.d < 190*SC && !hide && Math.random() < 0.62) ? cover : null;
-    aiBurst = 0.7 + Math.random()*0.95;
+    aiBurst = 0.75 + Math.random()*0.95;
   }
   aiBurst -= dt;
   const tgt = aiCover || goal;
