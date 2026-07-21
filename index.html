@@ -533,7 +533,9 @@ function resetPositions(){
   // He starts his turn ALERT (not mid-reaction), so if you're already holding
   // the look when he appears he waits it out instead of walking into it.
   aiBurst = 0; aiRest = 0; aiCover = null; aiWatchT = 9; aiWind = 0;
+  aiPatience = 0; aiPatienceMax = 1.6 + Math.random()*1.3;
   graceT = 0.7;                       // brief no-catch grace as a turn opens
+  turnT = 0;
   aiReact = AI_REACT * (0.85 + Math.random()*0.3);
   navFlow = null; navKey = "";
 }
@@ -594,7 +596,8 @@ function pace(){
    late and he's already clipped a peg on you.                            */
 let peekE = 1;            // 1 = full, 0 = empty
 let peekHeld = false;
-const PEEK_DRAIN = 1/2.1, PEEK_REFILL = 1/2.6, PEEK_MIN = 0.22;
+const PEEK_DRAIN = 1/2.1, PEEK_REFILL = 1/2.6, PEEK_MIN = 0.45;
+const PEEK_COST = 0.30;   // up-front cost of each spin-round — stops peek-spamming being free
 
 function updatePlayerLook(dt){
   LOOK.drift += dt;
@@ -608,7 +611,12 @@ function updatePlayerLook(dt){
 
   if(looking){
     peekE = Math.max(0, peekE - PEEK_DRAIN*dt);
-    if(LOOK.mode==="wash"){ LOOK.mode="turnF"; LOOK.t=0; LOOK.dur=0.22; S.peek(); }
+    if(LOOK.mode==="wash"){
+      //Each spin costs a chunk up front, not just per-second. Without this,
+      // machine-gunning tiny peeks is free and beats playing properly.
+      peekE = Math.max(0, peekE - PEEK_COST);
+      LOOK.mode="turnF"; LOOK.t=0; LOOK.dur=0.22; S.peek();
+    }
     else if(LOOK.mode==="turnF"){
       LOOK.t += dt; washer.turnT = LOOK.t/LOOK.dur;
       if(LOOK.t>=LOOK.dur){ LOOK.mode="look"; washer.turnT=1; }
@@ -622,6 +630,7 @@ function updatePlayerLook(dt){
     }
   }
   LOOK.warn = false;
+  LOOK.seen = (LOOK.mode==="look") ? (LOOK.seen||0)+dt : 0;
   washer.facing = (LOOK.mode==="look") ? 1 : washer.turnT;
   if(LOOK.mode==="wash" && Math.random()<0.35){
     bubbles.push({x:washer.x-20+Math.random()*40, y:SINK_Y-92, r:2+Math.random()*5, vy:-14-Math.random()*22, vx:(Math.random()-.5)*10, life:1.6});
@@ -650,6 +659,7 @@ function updateLook(dt){
     washer.turnT = 1 - LOOK.t/LOOK.dur;
     if(LOOK.t>=LOOK.dur){ LOOK.mode="wash"; LOOK.t=0; LOOK.dur=(1.5+Math.random()*1.9)*p; washer.turnT=0; }
   }
+  LOOK.seen = (LOOK.mode==="look") ? (LOOK.seen||0)+dt : 0;
   washer.facing = (LOOK.mode==="look") ? 1 : washer.turnT;
   // suds while scrubbing
   if(LOOK.mode==="wash" && Math.random()<0.35){
@@ -657,6 +667,11 @@ function updateLook(dt){
   }
 }
 const isWatching = () => LOOK.mode==="look";
+// A look has to actually LAND before it can catch anyone — otherwise flicking
+// round for a fraction of a second is as good as a proper look, and spamming
+// tiny peeks beats playing properly.
+const CATCH_MIN = 0.24;
+const lookLanded = () => LOOK.mode==="look" && LOOK.seen > CATCH_MIN;
 
 /* ---------- gameplay ---------- */
 function inPegRange(){
@@ -777,6 +792,16 @@ function updatePlay(dt){
   if(humanWatch()) peekHeld = down(" ") || stick.on;
   updateLook(dt);
 
+  // Watchdog: on HIS turn you have limited agency, so if he somehow fails to
+  // make progress we hand the turn back rather than leave you stuck at a sink.
+  turnT += dt;
+  if(humanWatch() && turnT > 40){
+    scene = "roundwin"; sceneT = 0; turnPegs = PER_TURN;
+    msg = "Shonty gave up!";
+    sub = "He got bored of creeping about and wandered off. Your turn to sneak.";
+    return;
+  }
+
   // ----- movement -----
   const SPD = PORTRAIT ? 250 : 168;      // longer room, longer stride
   let mx=0, my=0, throttle=1;
@@ -814,7 +839,7 @@ function updatePlay(dt){
   if(graceT > 0) graceT -= dt;
   const hide = hiddenAt(sneaker.x, sneaker.y);
   sneaker.hidden = !!hide;
-  if(graceT <= 0 && isWatching() && sneaker.moving && !hide){ getCaught(); return; }
+  if(graceT <= 0 && lookLanded() && sneaker.moving && !hide){ getCaught(); return; }
 }
 
 /* ---------- Shonty's AI sneak ----------
@@ -829,6 +854,9 @@ let aiWatchT = 0;       // how long you've been looking at him
 let aiWind = 0;         // winding up to clip a peg on
 let aiSinceWatch = 0;   // how long since you last looked — he breaks cover then
 let graceT = 0;         // no catches for a moment as a turn opens
+let turnT = 0;          // how long the current turn has run
+let aiPatience = 0;     // how long he's been holding back waiting for an opening
+let aiPatienceMax = 2;  // …after which he chances it anyway
 
 function nearestCover(){
   let best=null, bd=1e9;
@@ -872,11 +900,18 @@ function aiMove(dt){
   aiWind = 0;
 
   // --- he watches your meter: won't commit to the last few steps while
-  //     you've still got plenty of puff left to spin round with ---
+  //     you've still got plenty of puff left to spin round with.
+  //     BUT his patience is finite — otherwise a player who simply never
+  //     looks would leave him waiting forever and the turn would deadlock. ---
   if(humanWatch() && sneaker.hasPeg){
     const close = Math.hypot(sneaker.x-washer.x, sneaker.y-washer.y) < 150*SC;
-    if(close && peekE > 0.62 && !hide){ aiRest = Math.max(aiRest, 0.25); return {x:0,y:0,peg:false}; }
+    if(close && peekE > 0.62 && !hide && aiPatience < aiPatienceMax){
+      aiPatience += dt;
+      aiRest = Math.max(aiRest, 0.25);
+      return {x:0,y:0,peg:false};
+    }
   }
+  if(aiPatience >= aiPatienceMax) aiPatience = aiPatienceMax;   // committed now
 
   // --- creep in dashes, resting in cover between them ---
   aiSinceWatch += dt;
@@ -1528,17 +1563,30 @@ function drawStatusStrip(){
 /* the peek meter — how long you can keep watching before you must wash */
 function drawPeekMeter(){
   if(scene!=="play" || !humanWatch()) return;
-  const w = Math.min(240, W*0.56), h = 16*SC;
-  const x = W/2 - w/2, y = washer.y + 34*SC;
-  ctx.save();
-  ctx.fillStyle="rgba(255,255,255,.85)"; roundRect(x-3,y-3,w+6,h+6,(h+6)/2,true,false);
-  ctx.fillStyle="rgba(0,0,0,.10)"; roundRect(x,y,w,h,h/2,true,false);
+  const w = Math.min(250, W*0.60), h = 15*SC;
+  const x = W/2 - w/2, y = washer.y + 46*SC;
   const lo = peekE < PEEK_MIN;
-  ctx.fillStyle = lo ? "#ff8b3d" : (isWatching() ? "#e63946" : "#2fa8a0");
-  if(peekE > 0.02) roundRect(x,y,Math.max(h,w*peekE),h,h/2,true,false);
-  ctx.fillStyle = "#6b5442"; ctx.font = fnt(10, true);
+  const col = lo ? "#ff8b3d" : (isWatching() ? "#e63946" : "#2fa8a0");
+  const label = lo ? "catching your breath…" : "how long you can look";
+  ctx.save();
   ctx.textAlign="center"; ctx.textBaseline="middle";
-  ctx.fillText(lo ? "catching your breath" : "how long you can look", W/2, y+h/2+1);
+  // label sits ABOVE the bar on its own white pill, so it's never washed out
+  // by whatever colour the bar happens to be underneath it
+  ctx.font = fnt(12, true);
+  const tw = ctx.measureText(label).width + 18*TS, th = 19*TS;
+  ctx.fillStyle = "rgba(255,255,255,.92)";
+  roundRect(W/2-tw/2, y-th-5*SC, tw, th, th/2, true, false);
+  ctx.fillStyle = col;
+  ctx.fillText(label, W/2, y-th/2-5*SC+1);
+  // the bar itself
+  ctx.fillStyle="rgba(255,255,255,.92)"; roundRect(x-3,y-3,w+6,h+6,(h+6)/2,true,false);
+  ctx.fillStyle="rgba(0,0,0,.13)"; roundRect(x,y,w,h,h/2,true,false);
+  if(peekE > 0.02){
+    ctx.fillStyle = col;
+    roundRect(x,y,Math.max(h,w*peekE),h,h/2,true,false);
+    ctx.fillStyle="rgba(255,255,255,.30)";     // a little gloss
+    roundRect(x+2,y+2,Math.max(h-4,w*peekE-4),h*0.38,h*0.19,true,false);
+  }
   ctx.restore();
 }
 
