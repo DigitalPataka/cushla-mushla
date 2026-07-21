@@ -23,6 +23,21 @@ Shonty's at the sink. Creep up behind him and clip a peg on his back.
 - You carry **one peg at a time** — after each one, tiptoe back to the basket for another.
 - **Two pegs and your turn's over.**
 
+### The clock: Beanbags
+
+Beside the peg basket is a cat tree, and asleep on top of it is **Beanbags** — an
+extremely fat grey cat. She is the timer.
+
+- Every turn lasts **one minute**, and Beanbags is how you read it. Her weight bends
+  the post further and further over the peg basket, and the creaking gets worse.
+- When the minute's up the whole lot goes over with an almighty **crash**, pegs
+  everywhere. Whoever's at the sink spins round at the racket, and **the turn ends**
+  — you keep whatever you'd managed to peg on.
+- There's no countdown and no numbers. The lean *is* the clock.
+- The cat tree is solid like the rest of the furniture, so **you can hide behind it**.
+- Stop and **give her a pat** (same button as pegging) and she'll purr and smile.
+  It does nothing at all except cost you the seconds you spend standing there.
+
 ### His turn: you're on the dishes
 
 Now Shonty's creeping up on *you*, and **you** decide when to spin round and catch him.
@@ -43,6 +58,7 @@ and clatters to the floor. **First to five pegs wins.**
 | **Sneak** | Swipe and hold — drag further to move faster | Arrows or WASD |
 | **Freeze** | Lift your finger | Let go of the keys |
 | **Peg them** | Tap | Space |
+| **Pat Beanbags** | Tap beside the cat tree | Space beside the cat tree |
 | **Look round** (dish duty) | Hold anywhere | Hold Space |
 | **Pause** | ⏸ button, top right | P or Esc |
 | **Restart** | Pause menu | R |
@@ -54,7 +70,8 @@ worth crossing carefully.
 ## The cast
 
 **Cushla** — blonde, blue eyes, red sweater, pink bow, very sneaky.
-**Shonty** — glasses, beard, and a great big smile. Currently on dish duty.
+**Shonty** — glasses, goatee, and a great big smile. Currently on dish duty.
+**Beanbags** — grey, white belly and face, enormous. Asleep. Not helping.
 
 ## Notes
 

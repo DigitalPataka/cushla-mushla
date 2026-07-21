@@ -151,6 +151,23 @@ const S = {
       tone(f, 0.13, "sawtooth", 0.09, f*0.78, d);
       tone(f*2, 0.10, "triangle", 0.04, f*1.5, d+0.01);
     });
+  },
+  /* ----- the cat on the cat tree: your one-minute clock ----- */
+  creak(u){                      // u = 0..1 through the minute; leans get nastier
+    const f = 104 - u*34;
+    tone(f, 0.20+u*0.14, "sawtooth", 0.030+u*0.045, f*0.72);
+    tone(f*5.5, 0.07, "triangle", 0.014+u*0.020, f*4.2, 0.02);
+  },
+  purr(){                        // a fat, contented rumble
+    for(let i=0;i<8;i++) tone(66 + (i%2)*9, 0.10, "sawtooth", 0.05, null, i*0.072);
+    tone(500, 0.20, "sine", 0.045, 640, 0.10);
+  },
+  crash(){                       // timber! — and a very put-out cat
+    noise(0.55, 0.55, 760, 1.2);
+    tone(120, 0.50, "sawtooth", 0.20, 46);
+    [0.10,0.20,0.31,0.44,0.58].forEach(d=> tone(360+Math.random()*380, 0.09, "square", 0.11, null, d));
+    tone(660, 0.28, "sine", 0.17, 1180, 0.34);      // "mrrOW!"
+    tone(990, 0.20, "triangle", 0.07, 1500, 0.36);
   }
 };
 
@@ -322,15 +339,33 @@ const FURNITURE = PORTRAIT ? [
   // They alternate sides so there's always a way past, but never a straight run.
   furn(0.30, 0.16, 196, 56, "table"),
   furn(0.85, 0.32,  84, 68, "plant"),
-  furn(0.20, 0.49,  96, 66, "basket"),
+  // up from 0.49 so it clears the cat tree standing in the bottom-left corner
+  furn(0.20, 0.36,  96, 66, "basket"),
   furn(0.79, 0.66,  88, 54, "chair"),
-  furn(0.33, 0.83, 178, 56, "table")
+  // nudged right of its old 0.33 to leave the bottom-left corner clear for the
+  // cat tree — the left-hand route was barely a gap before anyway
+  furn(0.45, 0.83, 166, 56, "table")
 ] : [
   {x:300, y:300, w:280, h:60, kind:"table"},
-  {x: 70, y:392, w: 92, h:74, kind:"plant"},
+  // up from its old y:392 — the bottom-left corner is the cat's now
+  {x: 96, y:232, w: 92, h:74, kind:"plant"},
   {x:768, y:360, w: 98, h:66, kind:"basket"},
   {x:430, y:466, w: 96, h:56, kind:"chair"}
 ];
+
+/* ---------- the cat tree, and Beanbags asleep on top ----------
+   Beanbags is the game's clock. Over one minute her considerable weight bends
+   the post further and further over the peg basket, until the whole lot goes
+   down with an almighty clatter and the turn is up. You can duck in behind
+   her, and you can stop for a pat — she'll purr, which costs you nothing but
+   the seconds you spend standing there.                                   */
+// She stands exactly one tree-length to the left of the basket, so when she
+// finally goes over the whole lot comes down flat across the pegs.
+const CATTREE = {x: Math.max(64*SC, PEGBOX.x - 104*SC), y: PEGBOX.y - 62*SC};
+FURNITURE.push({x: CATTREE.x - 30*SC, y: CATTREE.y - 26*SC,
+                w: 60*SC, h: 30*SC, kind:"cattree"});
+const cat = {lean:0, wob:0, purr:0, smile:0, blink:0, patCd:0, creakT:0};
+
 // the pocket behind a piece (further from the sink) is where you're invisible
 FURNITURE.forEach(f => {
   f.solid = {x:f.x-4*SC, y:f.y+10*SC, w:f.w+8*SC, h:f.h-6*SC};
@@ -469,8 +504,11 @@ const AI_SPEED = 0.66;        // he creeps; you're quicker than he is
    choose when to spin round and try to catch him. First to five wins.   */
 const TARGET   = 5;    // pegs to win the whole game
 const PER_TURN = 2;    // successful pegs before the turn passes over
+const TURN_TIME = 60;  // …or one minute, whichever comes first — see the cat
 let target = TARGET;
 let turnPegs = 0;      // pegs placed so far this turn
+let turnClock = TURN_TIME;   // seconds left before the cat tree goes over
+let catFall = null;    // the topple, while it's happening
 let readyWait = false;
 
 // the player IS Cushla: sneaking on her turn, on dish duty on his
@@ -538,6 +576,9 @@ function resetPositions(){
   aiPatience = 0; aiPatienceMax = 1.6 + Math.random()*1.3;
   graceT = 0.7;                       // brief no-catch grace as a turn opens
   turnT = 0;
+  // a fresh minute, and the cat sits up straight again
+  turnClock = TURN_TIME; catFall = null;
+  cat.lean = 0; cat.wob = 0; cat.purr = 0; cat.smile = 0; cat.patCd = 0; cat.creakT = 0;
   aiReact = AI_REACT * (0.85 + Math.random()*0.3);
   navFlow = null; navKey = "";
 }
@@ -548,6 +589,7 @@ const inMatch = () => scene!=="title" && scene!=="over";
 function minWait(){
   if(scene==="intro")    return 0.7;
   if(scene==="caught")   return 3.1;   // let the whole gag play out first
+  if(scene==="catfall")  return 2.4;   // ditto — hear the crash before the words
   if(scene==="roundwin") return 0.9;
   if(scene==="over")     return 1.2;
   return 0;
@@ -563,6 +605,7 @@ function confirm_(){
   if(scene==="over"){ confetti=[]; scene="title"; sceneT=0; return; }
   if(scene==="intro"){ readyWait = false; scene="play"; sceneT=0; return; }
   if(scene==="caught"){ passTurn(); return; }
+  if(scene==="catfall"){ passTurn(); return; }
   if(scene==="roundwin"){
     if(turnPegs >= PER_TURN) passTurn();
     else { scene="play"; sceneT=0; }
@@ -685,6 +728,17 @@ function inPegRange(){
 function atPegBox(){
   return Math.hypot(sneaker.x - PEGBOX.x, (sneaker.y - PEGBOX.y)*1.3) < 76;
 }
+/* close enough to reach up and give her a scratch */
+function atCat(){
+  return Math.hypot(sneaker.x - CATTREE.x, (sneaker.y - CATTREE.y - 16*SC)*1.2) < 84*SC;
+}
+function patCat(){
+  cat.purr = Math.min(2.6, cat.purr + 1.6);
+  cat.patCd = 0.5;
+  S.purr();
+  for(let i=0;i<3;i++)
+    hearts.push({x: CATTREE.x + (Math.random()-.5)*44*SC, y: CATTREE.y - 116*SC, vy:-32, life:1.3});
+}
 function reload(){
   sneaker.hasPeg = true;
   S.peg();
@@ -793,20 +847,81 @@ function getCaught(){
   }
 }
 
+/* ---------- the cat tree goes over ----------
+   A minute of Beanbags is more than any post can take. Down it comes on top
+   of the peg basket, everyone in the kitchen hears it, and that's the turn —
+   whatever you'd managed to peg on by then, you keep.                    */
+function catTimeUp(){
+  scene = "catfall"; sceneT = 0;
+  catFall = {t:0, crashed:false};
+  msg = "TIMBER! 🐈";
+  sub = sneaker===cushla
+      ? "A minute of Beanbags was all that tree could take — down it came on the pegs. "
+        + "Shonty spun round. On the dishes with you!"
+      : "Down came Beanbags and her tree, right on the pegs! Shonty jumped out of his "
+        + "skin — his turn's up. Your go to sneak.";
+}
+function updateCatFall(dt){
+  const cf = catFall; if(!cf) return;
+  cf.t += dt;
+  if(cf.t > 0.5 && !cf.crashed){
+    cf.crashed = true;
+    shake = 0.85; flash = 0.14;
+    S.crash();
+    // pegs everywhere
+    for(let i=0;i<26;i++) sparks.push({
+      x: PEGBOX.x + (Math.random()-.5)*70, y: PEGBOX.y - 24,
+      vx:(Math.random()-.5)*300, vy:-Math.random()*230-30,
+      life:0.9, col: PEG_COLS[i%PEG_COLS.length]});
+    for(let i=0;i<6;i++) floorPegs.push({
+      x: PEGBOX.x + (Math.random()-.5)*130, y: PEGBOX.y + (Math.random()-.5)*26,
+      rot:(Math.random()-.5)*3, col: PEG_COLS[Math.floor(Math.random()*PEG_COLS.length)]});
+    if(floorPegs.length > 28) floorPegs.splice(0, floorPegs.length-28);
+    // nobody sleeps through that — whoever's at the sink spins straight round
+    LOOK.mode = "look"; LOOK.t = 0; LOOK.warn = false;
+  }
+  if(cf.crashed){ washer.facing = 1; washer.turnT = 1; washer.moving = false; }
+}
+/* the lean, the purr and the sleepy face — ticked every frame, every scene */
+function updateCat(dt){
+  cat.patCd = Math.max(0, cat.patCd - dt);
+  cat.purr  = Math.max(0, cat.purr  - dt);
+  const want = cat.purr > 0 ? 1 : 0;
+  cat.smile += (want - cat.smile) * Math.min(1, dt*6);
+  if(catFall){
+    // over she goes — a fast topple with a little settle at the end
+    const k = Math.min(1, catFall.t/0.55);
+    cat.lean = 0.34 + (1.53-0.34) * (1 - Math.pow(1-k, 3));
+    const after = catFall.t - 0.55;
+    if(after > 0) cat.lean = 1.53 + Math.sin(after*13) * 0.05 * Math.max(0, 1 - after*1.6);
+    cat.wob = 0;
+  } else {
+    const u = inMatch() ? 1 - Math.max(0, turnClock)/TURN_TIME : 0;
+    cat.lean = 0.34 * Math.pow(u, 1.7);
+    // she wobbles harder and faster the further over she gets
+    cat.wob = Math.sin(T*(1.4 + u*5)) * (0.006 + u*0.030)
+            + (cat.purr > 0 ? Math.sin(T*26)*0.007 : 0);
+  }
+}
+
 function updatePlay(dt){
   // when it's YOUR turn on the dishes, hold to spin round
   if(humanWatch()) peekHeld = down(" ") || stick.on;
   updateLook(dt);
 
-  // Watchdog: on HIS turn you have limited agency, so if he somehow fails to
-  // make progress we hand the turn back rather than leave you stuck at a sink.
+  // ----- the cat clock -----
+  // A minute a turn, in both directions: it's the whole reason a game has a
+  // shape. It also does the job the old 40-second "Shonty gave up" watchdog
+  // used to bodge, except now you can watch it coming.
   turnT += dt;
-  if(humanWatch() && turnT > 40){
-    scene = "roundwin"; sceneT = 0; turnPegs = PER_TURN;
-    msg = "Shonty gave up!";
-    sub = "He got bored of creeping about and wandered off. Your turn to sneak.";
-    return;
+  turnClock -= dt;
+  const u = 1 - Math.max(0, turnClock)/TURN_TIME;      // 0 at the off, 1 when she goes
+  cat.creakT -= dt;
+  if(cat.creakT <= 0){
+    if(u > 0.12) S.creak(u);
+    cat.creakT = 3.4 - u*2.7 + Math.random()*0.6;      // groans quicken as she tips
   }
+  if(turnClock <= 0){ catTimeUp(); return; }
 
   // ----- movement -----
   const SPD = PORTRAIT ? 250 : 168;      // longer room, longer stride
@@ -820,6 +935,7 @@ function updatePlay(dt){
       mx = stick.dx; my = stick.dy; throttle = 0.34 + stick.mag*0.66;
     }
     if((down(" ") || tapPeg>0) && inPegRange() && !isWatching()){ tapPeg = 0; placePeg(); return; }
+    if((down(" ") || tapPeg>0) && atCat() && cat.patCd<=0){ tapPeg = 0; patCat(); }
   } else {
     const ai = aiMove(dt); mx = ai.x; my = ai.y;
     if(ai.peg){ placePeg(); return; }
@@ -1213,6 +1329,176 @@ function drawGrade(){
   ctx.restore();
 }
 
+/* ---------- the cat tree ----------
+   Drawn from the foot of the post and rotated about it, so the whole thing —
+   post, pom-pom, platform and cat — leans as one piece as the minute runs out. */
+function drawCatTree(){
+  const tilt = cat.lean + cat.wob;
+  // how far she's finished landing: once down, she rights herself and sits up
+  const settle = catFall ? Math.min(1, Math.max(0, (catFall.t-0.45)/0.40)) : 0;
+  const u = inMatch() && !catFall ? 1 - Math.max(0, turnClock)/TURN_TIME : (catFall?1:0);
+
+  ctx.save();
+  // the canopy shadow swings out across the floor as the tree goes over
+  ctx.fillStyle = "rgba(120,70,30,.15)";
+  ctx.beginPath();
+  ctx.ellipse(CATTREE.x + Math.sin(tilt)*96*SC, CATTREE.y + 4*SC,
+              (30 + Math.sin(tilt)*34)*SC, 11*SC, 0, 0, 7);
+  ctx.fill();
+
+  ctx.translate(CATTREE.x, CATTREE.y);
+  ctx.rotate(tilt);
+  // everything below is authored at 430px-phone size, like the rest of the room,
+  // so she stays in proportion — and still lands on the basket — at any size
+  ctx.scale(SC, SC);
+
+  // base slab
+  ctx.fillStyle="#8b5e3c"; roundRect(-32,-13,64,17,6,true,false);
+  ctx.fillStyle="#a5744d"; roundRect(-30,-16,60,10,5,true,false);
+
+  // the post, wrapped in sisal rope
+  ctx.fillStyle="#c9a06a"; roundRect(-9,-96,18,84,5,true,false);
+  ctx.strokeStyle="rgba(150,110,60,.5)"; ctx.lineWidth=2;
+  for(let i=0;i<11;i++){
+    const y = -92 + i*7.6;
+    ctx.beginPath(); ctx.moveTo(-9,y); ctx.lineTo(9,y+3); ctx.stroke();
+  }
+  // a strained little bend shows in the post near the top
+  if(u > 0.5){
+    ctx.fillStyle = "rgba(90,55,25,"+((u-0.5)*0.30)+")";
+    roundRect(-9,-96,6,84,5,true,false);
+  }
+
+  // pom-pom on a string, swinging against the lean
+  ctx.save();
+  ctx.translate(15,-90); ctx.rotate(-tilt + Math.sin(T*2.2)*0.22);
+  ctx.strokeStyle="#b98741"; ctx.lineWidth=1.6;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,20); ctx.stroke();
+  ctx.fillStyle="#ff8fab"; ctx.beginPath(); ctx.arc(0,26,6,0,7); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,.45)"; ctx.beginPath(); ctx.arc(-2,24,2.2,0,7); ctx.fill();
+  ctx.restore();
+
+  // the top platform she's asleep on
+  ctx.fillStyle="#8b5e3c"; roundRect(-31,-108,62,13,5,true,false);
+  ctx.fillStyle="#a5744d"; roundRect(-30,-111,60,8,4,true,false);
+
+  // and the cat — she rights herself as she lands, because of course she does
+  ctx.save();
+  ctx.translate(0,-111);
+  ctx.rotate(-tilt*settle);
+  drawCat(u, settle);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+/* Beanbags herself: very grey, very fat, very asleep, white belly and face. */
+function drawCat(u, settle){
+  const purring = cat.purr > 0;
+  // she breathes slowly, and buzzes when she's being fussed over
+  const breathe = Math.sin(T*1.7)*1.1 + (purring ? Math.sin(T*24)*0.8 : 0);
+  const grey = "#9aa1a9", greyD = "#7f868e", cream = "#f4f6f8";
+  ctx.save();
+
+  // tail, curled right round the front of her
+  ctx.strokeStyle = grey; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-28,-8);
+  ctx.quadraticCurveTo(-40,-2 + Math.sin(T*1.5)*2, -22,2 + Math.sin(T*1.5)*3);
+  ctx.quadraticCurveTo(-8,5, 4,1);
+  ctx.stroke();
+  ctx.strokeStyle = cream; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.moveTo(-2,2); ctx.lineTo(4,1); ctx.stroke();
+  ctx.lineCap = "butt";
+
+  // the loaf — enormous
+  ctx.fillStyle = grey;
+  ctx.beginPath(); ctx.ellipse(-2,-20+breathe*0.2, 36, 20+breathe*0.35, 0,0,7); ctx.fill();
+  ctx.fillStyle = greyD;                    // a soft shade along her back
+  ctx.beginPath(); ctx.ellipse(-6,-30, 26, 8, -0.06, 0,7); ctx.fill();
+
+  // white belly, spilling over the edge of the platform
+  ctx.fillStyle = cream;
+  ctx.beginPath(); ctx.ellipse(0,-11+breathe*0.3, 28, 11, 0,0,7); ctx.fill();
+  // front paws tucked under her chin
+  ctx.beginPath(); ctx.ellipse(14,-5, 9, 5, 0,0,7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(1,-4, 9, 5, 0,0,7); ctx.fill();
+
+  // head
+  ctx.save();
+  ctx.translate(24,-34+breathe*0.3);
+  ctx.rotate(purring ? Math.sin(T*3)*0.05 : Math.sin(T*0.8)*0.02);
+  // ears
+  ctx.fillStyle = grey;
+  ctx.beginPath(); ctx.moveTo(-13,-9); ctx.lineTo(-16,-22); ctx.lineTo(-3,-14); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo( 9,-13); ctx.lineTo(13,-24); ctx.lineTo(16,-10); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#f0a9b8";
+  ctx.beginPath(); ctx.moveTo(-12,-11); ctx.lineTo(-14,-19); ctx.lineTo(-6,-14); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(10,-14); ctx.lineTo(12,-21); ctx.lineTo(14,-12); ctx.closePath(); ctx.fill();
+  // fat cheeks
+  ctx.fillStyle = grey;
+  ctx.beginPath(); ctx.ellipse(0,0, 17, 15, 0,0,7); ctx.fill();
+  // white face
+  ctx.fillStyle = cream;
+  ctx.beginPath(); ctx.ellipse(1,3, 14, 12, 0,0,7); ctx.fill();
+
+  // eyes. Fast asleep, until the post starts really going — then one eye
+  // opens — and once she's landed she looks around, entirely unbothered.
+  const wide = settle;
+  ctx.strokeStyle = "#4a4f55"; ctx.lineWidth = 2; ctx.lineCap = "round";
+  const eye = (ex, open) => {
+    if(open > 0.15){
+      ctx.fillStyle = "#3c4147";
+      ctx.beginPath(); ctx.ellipse(ex,-1, 2.6, 3.4*open, 0,0,7); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.arc(ex, -3, 4.2, 0.35, Math.PI-0.35); ctx.stroke();
+    }
+  };
+  eye(-6, Math.max(wide, u > 0.84 ? (u-0.84)/0.16 : 0));   // the one that cracks open
+  eye( 8, wide);
+  // nose and a mouth that curls up when she's fussed
+  ctx.fillStyle = "#f0a9b8";
+  ctx.beginPath(); ctx.moveTo(1,3); ctx.lineTo(5,3); ctx.lineTo(3,6); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#8d939a"; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.arc(0, 6 - cat.smile*1.5, 4 + cat.smile*1.6, 0.15, Math.PI-0.15); ctx.stroke();
+  ctx.beginPath(); ctx.arc(7, 6 - cat.smile*1.5, 4 + cat.smile*1.6, 0.15, Math.PI-0.15); ctx.stroke();
+  // whiskers
+  ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.lineWidth = 1.4;
+  for(let i=-1;i<2;i++){
+    ctx.beginPath(); ctx.moveTo(-6,3+i*3); ctx.lineTo(-22,1+i*5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10,3+i*3); ctx.lineTo(25,1+i*5); ctx.stroke();
+  }
+  ctx.lineCap = "butt";
+  ctx.restore();
+
+  // sleepy z's, only while she's genuinely asleep and not being fussed
+  if(!purring && !catFall && u < 0.84){
+    ctx.fillStyle = "rgba(90,110,140,.55)";
+    ctx.textAlign = "center";
+    for(let i=0;i<3;i++){
+      const ph = (T*0.5 + i*0.33) % 1;
+      ctx.globalAlpha = 0.55 * Math.sin(ph*Math.PI);
+      ctx.font = Math.round(10 + ph*9) + "px 'Comic Sans MS', Arial";
+      ctx.fillText("z", 40 + ph*16, -50 - ph*30);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // and the purr, as little curls coming off her
+  if(purring){
+    ctx.strokeStyle = "rgba(255,140,175,.75)"; ctx.lineWidth = 2;
+    for(let i=0;i<3;i++){
+      const ph = (T*1.4 + i*0.33) % 1;
+      ctx.globalAlpha = 0.8 * Math.sin(ph*Math.PI);
+      ctx.beginPath();
+      const yy = -46 - ph*26, xx = 42 + ph*8;
+      ctx.moveTo(xx, yy); ctx.quadraticCurveTo(xx+5, yy-4, xx+10, yy);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
 function drawFurniture(f){
   ctx.save();
   ctx.fillStyle="rgba(120,70,30,.16)";
@@ -1241,6 +1527,8 @@ function drawFurniture(f){
     ctx.fillStyle="#8bc7e8"; roundRect(f.x,f.y-34,f.w,34,8,true,false);
     ctx.fillStyle="#69aed3"; roundRect(f.x,f.y,f.w,f.h-16,8,true,false);
     ctx.fillStyle="#4f8fb3"; ctx.fillRect(f.x+8,f.y+f.h-16,10,18); ctx.fillRect(f.x+f.w-18,f.y+f.h-16,10,18);
+  } else if(f.kind==="cattree"){
+    ctx.restore(); drawCatTree(); return;
   } else if(f.kind==="rug"){
     ctx.fillStyle="#c9a7ff"; ctx.beginPath(); ctx.ellipse(f.x+f.w/2,f.y+f.h/2,f.w/2,f.h/2,0,0,7); ctx.fill();
     ctx.fillStyle="#e6d4ff"; ctx.beginPath(); ctx.ellipse(f.x+f.w/2,f.y+f.h/2,f.w/3,f.h/3,0,0,7); ctx.fill();
@@ -1267,7 +1555,11 @@ function drawPerson(p, opts){
   const top   = isC ? "#e63946" : "#2fa8a0";
   const topD  = isC ? "#c22a37" : "#238e88";
   const pants = isC ? "#3d4f8a" : "#4a5568";
-  const hair  = isC ? "#ffd45e" : "#241610";
+  // Shonty's hair used to be near-black, which — with a full beard under it —
+  // left almost no bare skin and made his whole head read as a dark blob.
+  // Warmer brown, a short crop and a goatee let his actual face show through.
+  const hair  = isC ? "#ffd45e" : "#4a2f1d";
+  const beard = "#57381f";
 
   ctx.save();
   ctx.translate(p.x, p.y + hopY);
@@ -1424,8 +1716,8 @@ function drawPerson(p, opts){
     }
     // brows
     ctx.strokeStyle = isC ? "#e0ac33" : "#1b0f09"; ctx.lineWidth=2.6; ctx.lineCap="round";
-    ctx.beginPath(); ctx.moveTo(-13,hy-11); ctx.lineTo(-3,hy-13);
-    ctx.moveTo(3,hy-13); ctx.lineTo(13,hy-11); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-12,hy-11); ctx.lineTo(-3,hy-12.5);
+    ctx.moveTo(3,hy-12.5); ctx.lineTo(12,hy-11); ctx.stroke();
     // blush
     ctx.fillStyle="rgba(255,120,120,.35)";
     ctx.beginPath(); ctx.ellipse(-14,hy+7,5,3.4,0,0,7); ctx.ellipse(14,hy+7,5,3.4,0,0,7); ctx.fill();
@@ -1437,33 +1729,32 @@ function drawPerson(p, opts){
       else ctx.arc(0,hy+6,7,0.15*Math.PI,0.85*Math.PI);
       ctx.stroke();
     } else {
-      // neat beard hugging the jaw — leaves cheeks and forehead bare
-      ctx.fillStyle="#33200f";
-      ctx.beginPath(); ctx.ellipse(0,hy+7,19.5,16,0,0,Math.PI); ctx.fill();   // lower half only
-      ctx.beginPath(); ctx.ellipse(-18.5,hy+2,4.5,9,0,0,7);                   // sideburns
-      ctx.ellipse( 18.5,hy+2,4.5,9,0,0,7); ctx.fill();
+      // goatee: a neat patch on the chin only, so the cheeks and jaw stay bare
+      ctx.fillStyle=beard;
+      ctx.beginPath(); ctx.ellipse(0,hy+18,7.5,6.5,0,0,7); ctx.fill();
       // great big smile — wide open when he's laughing his head off
       const mo = 1 + lg*(1.1 + Math.sin(T*17)*0.25);
       ctx.fillStyle="#4a2b16";
-      ctx.beginPath(); ctx.ellipse(0,hy+12,10,7*mo,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0,hy+9,10,6*mo,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
       if(lg > 0.3){
         ctx.fillStyle="#e0798a";     // tongue
-        ctx.beginPath(); ctx.ellipse(0,hy+12+6*mo,5,3.4,0,0,Math.PI); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(0,hy+9+5*mo,5,3.4,0,0,Math.PI); ctx.fill();
       }
       ctx.fillStyle="#fff";
-      ctx.beginPath(); ctx.ellipse(0,hy+12,9,4.6,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
-      ctx.fillStyle="#33200f"; // moustache, sitting just above the smile
-      ctx.beginPath(); ctx.ellipse(-6,hy+7,8,4,0.28,0,7); ctx.ellipse(6,hy+7,8,4,-0.28,0,7); ctx.fill();
-      // glasses — pale lens fill first so the dark frame really pops
+      ctx.beginPath(); ctx.ellipse(0,hy+9,9,4*mo,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
+      ctx.fillStyle=beard;  // moustache, sitting just above the smile
+      ctx.beginPath(); ctx.ellipse(-5,hy+4,7,3.4,0.30,0,7); ctx.ellipse(5,hy+4,7,3.4,-0.30,0,7); ctx.fill();
+      // glasses — pale lens fill first so the dark frame really pops. Kept a
+      // touch smaller than the eyes need, to leave bare skin up to the hairline.
       ctx.fillStyle="rgba(225,245,255,.55)";
-      ctx.beginPath(); ctx.arc(-8,hy-2,8.5,0,7); ctx.fill();
-      ctx.beginPath(); ctx.arc( 8,hy-2,8.5,0,7); ctx.fill();
-      ctx.strokeStyle="#14181f"; ctx.lineWidth=3.4;
-      ctx.beginPath(); ctx.arc(-8,hy-2,8.5,0,7); ctx.stroke();
-      ctx.beginPath(); ctx.arc( 8,hy-2,8.5,0,7); ctx.stroke();
-      ctx.lineWidth=3; ctx.beginPath();
-      ctx.moveTo(-1.2,hy-3); ctx.lineTo(1.2,hy-3);
-      ctx.moveTo(-16.5,hy-3); ctx.lineTo(-21,hy-5); ctx.moveTo(16.5,hy-3); ctx.lineTo(21,hy-5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(-8,hy-2,7.4,0,7); ctx.fill();
+      ctx.beginPath(); ctx.arc( 8,hy-2,7.4,0,7); ctx.fill();
+      ctx.strokeStyle="#14181f"; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(-8,hy-2,7.4,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.arc( 8,hy-2,7.4,0,7); ctx.stroke();
+      ctx.lineWidth=2.7; ctx.beginPath();
+      ctx.moveTo(-0.6,hy-3); ctx.lineTo(0.6,hy-3);
+      ctx.moveTo(-15.4,hy-3); ctx.lineTo(-20.5,hy-5); ctx.moveTo(15.4,hy-3); ctx.lineTo(20.5,hy-5); ctx.stroke();
       ctx.fillStyle="rgba(255,255,255,.28)";
       ctx.beginPath(); ctx.arc(-10,hy-5,3,0,7); ctx.arc(6,hy-5,3,0,7); ctx.fill();
     }
@@ -1489,8 +1780,12 @@ function drawPerson(p, opts){
     ctx.beginPath(); ctx.ellipse(16,hy-17,7,5,0.5,0,7); ctx.ellipse(25,hy-14,7,5,-0.4,0,7); ctx.fill();
     ctx.fillStyle="#ffd1e0"; ctx.beginPath(); ctx.arc(20.5,hy-15.5,2.6,0,7); ctx.fill();
   } else {
-    ctx.beginPath(); ctx.ellipse(0,hy-8,22,17,0,Math.PI,0); ctx.fill();
-    ctx.fillRect(-22,hy-10,44,6);
+    // Short back and sides, hairline arcing UP across the middle so there's a
+    // proper forehead. (A flat fringe straight across here read as a bowl cut.)
+    ctx.beginPath(); ctx.ellipse(0,hy-17,19.5,8,0,Math.PI,0); ctx.fill();
+    // it comes down lower at the temples, which is what makes it a hairline
+    ctx.beginPath(); ctx.ellipse(-17,hy-12,5.5,7,0.22,0,7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 17,hy-12,5.5,7,-0.22,0,7); ctx.fill();
     if(!front){ ctx.beginPath(); ctx.ellipse(0,hy-4,22,19,0,0,7); ctx.fill(); }
   }
   ctx.restore(); // squish
@@ -2024,11 +2319,13 @@ function frame(now){
   else if(scene==="play") updatePlay(dt);
   else if(scene==="intro"){ updateLook(dt); }
   else if(scene==="caught"){ updateCatch(dt); }
+  else if(scene==="catfall"){ updateCatFall(dt); }
   // every popup now waits for a tap; these are just anti-softlock backstops
   else if(scene==="intro"   && sceneT>25) confirm_();
   else if(scene==="caught"  && sceneT>25) confirm_();
   else if(scene==="roundwin"&& sceneT>25) confirm_();
   updateFx(dt);
+  if(!paused) updateCat(dt);
   if(!paused) updateAtmosphere(dt);
 
   // ---- render ----
@@ -2117,6 +2414,8 @@ function frame(now){
     if(scene==="intro")    banner(msg, sub, "#ff8b3d");
     // let the SNAP + squeal play out in full before the popup covers it
     if(scene==="caught" && sceneT>2.3) banner(msg, sub, "#e63946");
+    // same again: the crash, the pegs and the cat land before the words do
+    if(scene==="catfall" && sceneT>1.9) banner(msg, sub, "#9b7bd4");
     if(scene==="roundwin") banner(msg, sub, "#2f9e56");
     if(scene==="over")     banner(msg, sub, "#ffb703");
     drawStatusStrip();
