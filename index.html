@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<!-- Keep this page out of search results — it's a private family game.
+     Anyone with the link can play; nobody can stumble across it. -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="googlebot" content="noindex, nofollow, noarchive">
+<title>Cushla Mushla — the Peg Game!</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    background: radial-gradient(circle at 50% 20%, #ffe9a8 0%, #ffc978 45%, #ff9f6e 100%);
+    font-family: "Comic Sans MS", "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:100%; overflow:hidden; user-select:none;
+    -webkit-user-select:none; -webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none; touch-action:none;
+  }
+  #wrap{ position:relative; display:flex; flex-direction:column; align-items:center; }
+  h1{
+    margin:0 0 8px; font-size:30px; letter-spacing:1px; text-align:center;
+    color:#fff; text-shadow: 0 3px 0 #e0574f, 0 6px 10px rgba(0,0,0,.25);
+  }
+  canvas{
+    display:block; border-radius:22px; background:#fff;
+    box-shadow: 0 14px 40px rgba(120,60,20,.35), 0 0 0 6px #fff, 0 0 0 10px #ffd166;
+    touch-action:none;
+  }
+  #hint{ margin-top:10px; color:#8a4a20; font-size:14px; text-align:center; }
+  /* on a phone the canvas takes the whole screen — the chrome just steals room */
+  body.mobile h1, body.mobile #hint{ display:none; }
+  body.mobile{ background:#ffb27a; }
+  body.mobile canvas{ border-radius:0; box-shadow:none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>✨ Cushla Mushla ✨</h1>
+  <canvas id="game" width="960" height="600"></canvas>
+  <div id="hint">← → ↑ ↓ / WASD sneak &nbsp;•&nbsp; SPACE peg &nbsp;•&nbsp; 1 or 2 players &nbsp;•&nbsp; P pause &nbsp;•&nbsp; R restart &nbsp;•&nbsp; N music &nbsp;•&nbsp; M mute<br><span style="opacity:.75">on a phone: swipe &amp; hold to sneak, let go to freeze, tap to peg</span></div>
+</div>
+<script>
+(() => {
+"use strict";
+
+/* ============================================================
+   CUSHLA MUSHLA — a cheerful sneak-up-and-peg arcade game
+   ============================================================ */
+
+const cv = document.getElementById("game");
+const ctx = cv.getContext("2d");
+
+/* ---------- responsive stage ----------
+   Phones get a tall portrait kitchen: a much longer floor to creep
+   across, which makes the sneak read properly on a small screen.   */
+const TOUCH = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
+const PORTRAIT = (window.innerHeight > window.innerWidth * 1.02) || window.innerWidth < 780;
+const MOBILE = TOUCH || PORTRAIT;
+const W = PORTRAIT ? 620 : 960;
+const H = PORTRAIT ? 1040 : 600;
+cv.width = W; cv.height = H;
+if(MOBILE) document.body.classList.add("mobile");
+
+function fitStage(){
+  const chromeH = document.body.classList.contains("mobile") ? 0 : 116;
+  const availW = window.innerWidth  - (document.body.classList.contains("mobile") ? 0 : 40);
+  const availH = window.innerHeight - chromeH;
+  const s = Math.min(availW / W, availH / H);
+  cv.style.width  = Math.floor(W * s) + "px";
+  cv.style.height = Math.floor(H * s) + "px";
+}
+addEventListener("resize", fitStage);
+addEventListener("orientationchange", ()=>setTimeout(fitStage, 250));
+fitStage();
+
+/* ---------- tiny audio kit ---------- */
+let AC = null, muted = false;
+function ac(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function tone(freq, dur, type, vol, slideTo, delay){
+  const a = ac(); if(!a || muted) return;
+  const t0 = a.currentTime + (delay||0);
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type||"sine"; o.frequency.setValueAtTime(freq, t0);
+  if(slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20,slideTo), t0+dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol||0.2, t0+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0+dur+0.05);
+}
+function noise(dur, vol, freq, q, delay){
+  const a = ac(); if(!a || muted) return;
+  const t0 = a.currentTime + (delay||0);
+  const n = Math.floor(a.sampleRate*dur);
+  const buf = a.createBuffer(1,n,a.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/n,2.2);
+  const src = a.createBufferSource(); src.buffer = buf;
+  const bp = a.createBiquadFilter(); bp.type="bandpass"; bp.frequency.setValueAtTime(freq||1400,t0);
+  bp.frequency.exponentialRampToValueAtTime((freq||1400)*0.35, t0+dur);
+  bp.Q.value = q||3;
+  const g = a.createGain(); g.gain.value = vol||0.3;
+  src.connect(bp); bp.connect(g); g.connect(a.destination); src.start(t0);
+}
+const S = {
+  peg(){ tone(660,0.09,"square",0.14); tone(1320,0.12,"triangle",0.12,1760,0.05); },
+  point(){ [523,659,784,1047].forEach((f,i)=>tone(f,0.16,"triangle",0.16,null,i*0.07)); },
+  snap(){ noise(0.16,0.5,2600,6); tone(180,0.14,"sawtooth",0.18,60); },
+  ow(){ // cartoon squeal
+    tone(700,0.20,"sine",0.20,1180,0.08);
+    tone(1400,0.18,"triangle",0.07,2000,0.09);
+    tone(1050,0.22,"sine",0.16,760,0.30);
+  },
+  peek(){ tone(880,0.07,"square",0.07); },
+  step(){ tone(160+Math.random()*40,0.04,"sine",0.05); },
+  win(){ [523,659,784,1047,1319].forEach((f,i)=>tone(f,0.4,"triangle",0.18,null,i*0.11)); },
+  lose(){ [400,340,280].forEach((f,i)=>tone(f,0.25,"sine",0.14,null,i*0.13)); },
+  ui(){ tone(880,0.08,"triangle",0.12,1200); }
+};
+
+/* ---------- light, cheerful background music ----------
+   A little 4-chord music box: C – G – Am – F, with a plucky
+   arpeggio, a soft bass and a twinkle on the off-beats.      */
+// starts OFF on purpose — nobody wants a phone at full volume suddenly
+// playing music at them. Turn it on from the title screen, N, or the pause menu.
+const MUS = { on:false, next:0, step:0, vol:0.055 };
+const PROG = [0, 7, 9, 5];                 // C  G  Am  F
+const ARP  = [0, 4, 7, 12, 7, 4, 7, 4];
+const MEL  = [12, null, 16, null, 14, null, 12, 19, null, 16, 14, null, 12, null, 9, null];
+const nf = s => 261.626 * Math.pow(2, s/12);
+
+function at(freq, dur, type, vol, when, slideTo){
+  const a = ac(); if(!a) return;
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, when);
+  if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, when+dur);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(vol, when+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
+  o.connect(g); g.connect(a.destination); o.start(when); o.stop(when+dur+0.05);
+}
+function musicTick(){
+  const a = ac();
+  if(!a || a.state!=="running" || muted || !MUS.on){ MUS.next = 0; return; }
+  const now = a.currentTime, SPB = 0.1875;          // ~160bpm eighth notes
+  if(MUS.next < now) MUS.next = now + 0.06;
+  while(MUS.next < now + 0.35){
+    const s = MUS.step, t = MUS.next;
+    const root = PROG[Math.floor(s/8) % 4];
+    const V = MUS.vol * (paused ? 0.35 : 1);
+    if(s % 8 === 0) at(nf(root-24), 0.42, "triangle", V*1.5, t);      // bass
+    if(s % 8 === 4) at(nf(root-12), 0.30, "triangle", V*1.0, t);
+    at(nf(root + ARP[s % 8] + 12), 0.22, "sine", V*0.85, t);          // arpeggio
+    const m = MEL[s % 16];
+    if(m !== null) at(nf(root + m + 12), 0.30, "triangle", V*0.55, t);// melody
+    if(s % 8 === 6) at(nf(root + 24), 0.16, "sine", V*0.30, t);       // twinkle
+    MUS.next += SPB; MUS.step++;
+  }
+}
+
+/* ---------- input ---------- */
+const keys = {};
+addEventListener("keydown", e=>{
+  if([" ","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) e.preventDefault();
+  if(e.repeat) return;
+  keys[e.key.toLowerCase()] = true;
+  ac(); if(AC && AC.state==="suspended") AC.resume();
+  if(e.key.toLowerCase()==="m"){ muted = !muted; }
+  onKey(e.key.toLowerCase());
+});
+addEventListener("keyup", e=>{ keys[e.key.toLowerCase()] = false; });
+const down = (...k)=> k.some(x=>keys[x]);
+
+/* ---------- swipe / drag controls ----------
+   Press and swipe anywhere: Cushla creeps in that direction, at a speed
+   set by how far you've dragged. LIFT YOUR FINGER TO FREEZE — which is
+   exactly what you need when Shonty spins round. A quick tap places a
+   peg (or starts the game / dismisses a banner).                      */
+const stick = { on:false, id:null, ox:0, oy:0, x:0, y:0, dx:0, dy:0, mag:0, t0:0, moved:0 };
+let tapPeg = 0;                       // frames-worth of "peg now" from a tap
+const STICK_MAX = 62, STICK_DEAD = 9;
+
+function canvasPos(e){
+  const r = cv.getBoundingClientRect();
+  return { x:(e.clientX - r.left) * (W / r.width), y:(e.clientY - r.top) * (H / r.height) };
+}
+function pauseBtn(){ const r = MOBILE?30:22; return {x:W-r-16, y:r+16, r}; }
+function hitBtn(b,p){ return Math.hypot(p.x-b.x, p.y-b.y) < b.r*1.5; }
+
+cv.addEventListener("pointerdown", e=>{
+  e.preventDefault();
+  cv.setPointerCapture(e.pointerId);
+  ac(); if(AC && AC.state==="suspended") AC.resume();
+  const p = canvasPos(e);
+  if(inMatch() && hitBtn(pauseBtn(), p)){ paused = !paused; S.ui(); return; }
+  if(paused){ handlePauseTap(p); return; }
+  if(stick.on) return;
+  stick.on = true; stick.id = e.pointerId;
+  stick.ox = stick.x = p.x; stick.oy = stick.y = p.y;
+  stick.dx = stick.dy = stick.mag = 0; stick.moved = 0; stick.t0 = performance.now();
+}, {passive:false});
+
+cv.addEventListener("pointermove", e=>{
+  if(!stick.on || e.pointerId !== stick.id) return;
+  e.preventDefault();
+  const p = canvasPos(e);
+  stick.x = p.x; stick.y = p.y;
+  let dx = p.x - stick.ox, dy = p.y - stick.oy;
+  const d = Math.hypot(dx,dy);
+  stick.moved = Math.max(stick.moved, d);
+  // if the drag runs long, let the anchor trail the finger so you never run out of room
+  if(d > STICK_MAX){
+    stick.ox += dx * (1 - STICK_MAX/d);
+    stick.oy += dy * (1 - STICK_MAX/d);
+    dx = p.x - stick.ox; dy = p.y - stick.oy;
+  }
+  const dd = Math.hypot(dx,dy);
+  if(dd < STICK_DEAD){ stick.dx = stick.dy = stick.mag = 0; return; }
+  stick.dx = dx/dd; stick.dy = dy/dd;
+  stick.mag = Math.min(1, (dd - STICK_DEAD) / (STICK_MAX - STICK_DEAD));
+}, {passive:false});
+
+function endStick(e){
+  if(!stick.on || (e && e.pointerId !== stick.id)) return;
+  const quick = performance.now() - stick.t0 < 260;
+  if(quick && stick.moved < 16){          // a tap, not a swipe
+    if(scene==="title"){
+      const p = {x:stick.ox, y:stick.oy};
+      const mb = musicBtn();
+      if(p.x>mb.x && p.x<mb.x+mb.w && p.y>mb.y && p.y<mb.y+mb.h){
+        MUS.on = !MUS.on; S.ui();                    // just the toggle — don't start yet
+      } else {
+        const b = titleBtns().find(b => p.x>b.x && p.x<b.x+b.w && p.y>b.y && p.y<b.y+b.h);
+        mode = b ? b.mode : "solo";
+        S.ui(); startGame();
+      }
+    }
+    else if(scene==="over" || readyWait){ confirm_(); }
+    else tapPeg = 0.22;                   // "peg him!" — held briefly so it can't be missed
+  }
+  stick.on = false; stick.id = null; stick.dx = stick.dy = stick.mag = 0;
+}
+cv.addEventListener("pointerup", endStick, {passive:false});
+cv.addEventListener("pointercancel", endStick, {passive:false});
+cv.addEventListener("contextmenu", e=>e.preventDefault());
+
+function handlePauseTap(p){
+  const bw = Math.min(420, W-60), bx = (W-bw)/2, by = (H-252)/2;
+  for(let i=0;i<5;i++){
+    if(p.y > by+90+i*30 && p.y < by+122+i*30 && p.x>bx && p.x<bx+bw){
+      const act = ["resume","restart","music","mute","quit"][i];
+      S.ui();
+      if(act==="resume") paused = false;
+      else if(act==="restart"){ paused=false; confetti=[]; sparks=[]; hearts=[]; startGame(); }
+      else if(act==="music") MUS.on = !MUS.on;
+      else if(act==="mute") muted = !muted;
+      else if(act==="quit"){ paused=false; confetti=[]; scene="title"; sceneT=0; }
+      return;
+    }
+  }
+  paused = false;   // tap anywhere else to resume
+}
+
+/* ---------- world ---------- */
+const FLOOR_TOP = PORTRAIT ? 210 : 168;
+const SINK_Y    = FLOOR_TOP + 28;      // where the washer stands
+const START     = {x: W/2 + 46, y: H - 46};   // sneaker spawn, far end of the room
+const PEGBOX    = {x: W/2 - 74, y: H - 36};   // the peg basket — reload here after every peg
+const PEG_COLS  = ["#ff5d73","#ffd93d","#5ec8ff","#8ce99a","#c77dff","#ff9f45","#4dd4ac"];
+
+const FURNITURE = PORTRAIT ? [
+  // a long galley kitchen — six pockets of cover between you and the sink
+  {x: 30, y:296, w: 92, h: 76, kind:"plant"},
+  {x:430, y:300, w:104, h: 72, kind:"basket"},
+  {x:150, y:414, w:300, h: 62, kind:"table"},
+  {x: 40, y:552, w: 92, h: 58, kind:"chair"},
+  {x:432, y:566, w:150, h: 60, kind:"rug"},
+  {x:196, y:678, w:104, h: 72, kind:"basket"},
+  {x:428, y:756, w: 92, h: 76, kind:"plant"},
+  {x: 60, y:812, w:220, h: 60, kind:"table"},
+  {x:352, y:906, w:150, h: 56, kind:"rug"}
+] : [
+  {x:300, y:322, w:310, h:66, kind:"table"},
+  {x: 78, y:288, w: 96, h:78, kind:"plant"},
+  {x:790, y:330, w:104, h:74, kind:"basket"},
+  {x:150, y:452, w: 96, h:60, kind:"chair"},
+  {x:706, y:462, w:110, h:56, kind:"rug"}
+];
+// standing in the shaded pocket behind a piece of furniture = invisible
+FURNITURE.forEach(f => f.hide = {x:f.x-10, y:f.y+f.h-14, w:f.w+20, h:64});
+
+function hiddenAt(x,y){
+  for(const f of FURNITURE){
+    const h = f.hide;
+    if(x>h.x && x<h.x+h.w && y>h.y && y<h.y+h.h) return f;
+  }
+  return null;
+}
+
+/* ---------- characters ---------- */
+function makeChar(who){
+  return {
+    who,
+    x: START.x, y: START.y,
+    vx:0, vy:0, walk:0, moving:false,
+    facing: 0,          // 0 = back to us, 1 = facing us
+    turnT: 0,
+    pegsOn: [],         // pegs stuck to THIS character
+    hasPeg: true,       // carrying a peg? if not, sneak back to the basket
+    squeal: 0, hop: 0,
+    dir: 1
+  };
+}
+const cushla = makeChar("Cushla");
+const shonty = makeChar("Shonty");
+
+const LOOK = {   // the washer's look-around cycle
+  mode:"wash", t:0, dur:2.4, warn:false, drift:0
+};
+
+let sneaker = cushla, washer = shonty;   // Cushla goes first
+let scene = "title";                     // title | intro | play | caught | roundwin | over
+let sceneT = 0;
+let msg = "", sub = "";
+let bubbles = [], sparks = [], confetti = [], hearts = [];
+let shake = 0, flash = 0, snapFx = 0;
+let paused = false;
+let aiThink = 0, aiSkill = 0.5, aiPause = 0;
+
+/* ---------- match structure ----------
+   A ROUND is first-to-5 pegs. You play two rounds so each player gets
+   a go at sneaking first — then 1–1 goes to a "Golden Peg" decider.  */
+let mode = "solo";                 // "solo" = vs AI Shonty, "duo" = pass-and-play
+let round = 1;                     // 1, 2, or 3 (the decider)
+let target = 5;                    // pegs needed to take the round
+let wins = {Cushla:0, Shonty:0};
+let readyWait = false;             // duo mode: hold the turn card until they swap
+const TARGET = 5;
+
+const nameOf = c => c.who;
+const humanTurn = () => mode==="duo" || sneaker===cushla;
+const roundName = () => round===3 ? "Golden Peg decider" : "Round "+round;
+
+/* ---------- flow ---------- */
+function startGame(){                 // brand new match
+  wins = {Cushla:0, Shonty:0};
+  round = 1;
+  startRound(cushla);                 // round 1: Cushla sneaks first
+}
+function startRound(starter){
+  target = (round===3) ? 3 : TARGET;
+  cushla.pegsOn = []; shonty.pegsOn = [];
+  floorPegs = [];
+  sneaker = starter; washer = (starter===cushla) ? shonty : cushla;
+  beginTurn(true);
+}
+function roundOver(winner){
+  wins[winner.who]++;
+  scene = "gamewin"; sceneT = 0; readyWait = true;
+  S.win();
+  for(let i=0;i<170;i++) confetti.push({x:Math.random()*W,y:-Math.random()*H,vy:60+Math.random()*180,vx:(Math.random()-.5)*60,r:Math.random()*6+3,rot:Math.random()*6,vr:(Math.random()-.5)*8,col:PEG_COLS[i%PEG_COLS.length]});
+  const champ = wins[winner.who] >= 2 || round === 3;
+  if(champ){
+    scene = "over"; readyWait = false;
+    msg = winner.who + " is the Peg Champion! 🏆";
+    sub = "Rounds won — Cushla " + wins.Cushla + ", Shonty " + wins.Shonty + ". "
+        + (TOUCH ? "Tap to play again." : "Press ENTER to play again.");
+  } else {
+    msg = winner.who + " takes " + roundName() + "! 🎉";
+    const nextStarter = (round===1) ? shonty : ((wins.Cushla > wins.Shonty) ? shonty : cushla);
+    sub = (round===1)
+      ? "Now Round 2 — this time Shonty sneaks first, so it's all fair and square."
+      : "One round each! Time for the Golden Peg decider — first to 3.";
+    pendingRound = { n: round+1, starter: nextStarter };
+  }
+}
+let pendingRound = null;
+let floorPegs = [];      // pegs that have pinged off and are lying on the floor
+let fallers = [];        // …while they're still tumbling through the air
+
+function beginTurn(first){
+  resetPositions();
+  scene = "intro"; sceneT = 0;
+  readyWait = (mode==="duo");
+  msg = sneaker.who + "'s turn to sneak!";
+  sub = sneaker === cushla
+      ? "Creep up behind Shonty and peg him — freeze or hide when he looks!"
+      : (mode==="duo" ? "Player 2 — sneak up on Cushla and peg her!"
+                      : "Uh oh… Shonty's coming for YOU. (watch out!)");
+  if(first) sub = roundName() + " — sneak up behind " + washer.who
+                + " and clip a peg on. First to " + target + " takes the round!";
+  if(mode==="duo") sub += "  (pass the " + (TOUCH?"phone":"keyboard") + " over!)";
+}
+function resetPositions(){
+  sneaker.x = START.x; sneaker.y = START.y; sneaker.facing = 0; sneaker.turnT = 0;
+  sneaker.hasPeg = true;
+  washer.x = W/2; washer.y = SINK_Y; washer.facing = 0; washer.turnT = 0;
+  LOOK.mode = "wash"; LOOK.t = 0; LOOK.dur = 2.6; LOOK.warn = false; LOOK.drift = 0;
+  aiThink = 0; aiPause = 0.6;
+  aiSkill = 0.42 + Math.random()*0.3;
+}
+const inMatch = () => scene!=="title" && scene!=="over";
+
+/* one shared "go on then" action: ENTER on desktop, a tap on a phone */
+function confirm_(){
+  if(paused) return;
+  S.ui();
+  if(scene==="title"){ startGame(); return; }
+  if(scene==="over"){ confetti=[]; scene="title"; sceneT=0; return; }
+  if(scene==="gamewin" && readyWait && pendingRound){
+    confetti=[]; round = pendingRound.n;
+    const st = pendingRound.starter; pendingRound = null; readyWait = false;
+    startRound(st); return;
+  }
+  if(scene==="intro" && readyWait){ readyWait = false; scene="play"; sceneT=0; return; }
+}
+function onKey(k){
+  if(k==="1" && scene==="title"){ mode="solo"; S.ui(); startGame(); return; }
+  if(k==="2" && scene==="title"){ mode="duo";  S.ui(); startGame(); return; }
+  if(k==="enter"){ confirm_(); return; }
+  if(k==="p" || k==="escape"){
+    if(inMatch()){ paused = !paused; S.ui(); }
+    return;
+  }
+  if(k==="n"){ MUS.on = !MUS.on; S.ui(); return; }
+  if(k==="r"){                       // restart the whole match
+    if(scene!=="title"){ paused=false; confetti=[]; sparks=[]; hearts=[]; S.ui(); startGame(); }
+    return;
+  }
+  if(k==="q" && paused){             // quit out to the title screen
+    paused=false; confetti=[]; scene="title"; sceneT=0; S.ui();
+  }
+}
+
+/* ---------- difficulty ---------- */
+function pace(){
+  const total = cushla.pegsOn.length + shonty.pegsOn.length;
+  return Math.max(0.55, 1 - total*0.055);
+}
+
+/* ---------- the washer's look cycle ---------- */
+function updateLook(dt){
+  const p = pace();
+  LOOK.t += dt;
+  LOOK.drift += dt;
+  // gentle shuffle along the sink
+  washer.x = W/2 + Math.sin(LOOK.drift*0.5)*(PORTRAIT?54:66);
+
+  if(LOOK.mode==="wash"){
+    LOOK.warn = LOOK.t > LOOK.dur - 0.55;
+    if(LOOK.warn && !LOOK._pinged){ LOOK._pinged = true; S.peek(); }
+    if(LOOK.t >= LOOK.dur){ LOOK.mode="turnF"; LOOK.t=0; LOOK.dur=0.34; LOOK.warn=false; LOOK._pinged=false; }
+  } else if(LOOK.mode==="turnF"){
+    washer.turnT = LOOK.t/LOOK.dur;
+    if(LOOK.t>=LOOK.dur){ LOOK.mode="look"; LOOK.t=0; LOOK.dur=(1.0+Math.random()*1.1)*p; washer.turnT=1; }
+  } else if(LOOK.mode==="look"){
+    if(LOOK.t>=LOOK.dur){ LOOK.mode="turnB"; LOOK.t=0; LOOK.dur=0.34; }
+  } else if(LOOK.mode==="turnB"){
+    washer.turnT = 1 - LOOK.t/LOOK.dur;
+    if(LOOK.t>=LOOK.dur){ LOOK.mode="wash"; LOOK.t=0; LOOK.dur=(1.5+Math.random()*1.9)*p; washer.turnT=0; }
+  }
+  washer.facing = (LOOK.mode==="look") ? 1 : washer.turnT;
+  // suds while scrubbing
+  if(LOOK.mode==="wash" && Math.random()<0.35){
+    bubbles.push({x:washer.x-20+Math.random()*40, y:SINK_Y-92, r:2+Math.random()*5, vy:-14-Math.random()*22, vx:(Math.random()-.5)*10, life:1.6});
+  }
+}
+const isWatching = () => LOOK.mode==="look";
+
+/* ---------- gameplay ---------- */
+function inPegRange(){
+  if(!sneaker.hasPeg) return false;
+  const dx = sneaker.x - washer.x, dy = sneaker.y - washer.y;
+  return Math.hypot(dx, dy*1.4) < 82 && sneaker.y > washer.y - 8;
+}
+function atPegBox(){
+  return Math.hypot(sneaker.x - PEGBOX.x, (sneaker.y - PEGBOX.y)*1.3) < 76;
+}
+function reload(){
+  sneaker.hasPeg = true;
+  S.peg();
+  for(let i=0;i<10;i++) sparks.push({x:PEGBOX.x,y:PEGBOX.y-30,vx:(Math.random()-.5)*140,vy:-Math.random()*140-20,life:0.6,col:PEG_COLS[i%PEG_COLS.length]});
+}
+function placePeg(){
+  const pal = PEG_COLS;
+  sneaker.hasPeg = false;
+  washer.pegsOn.push({
+    ox:(Math.random()-0.5)*36, oy:-84+Math.random()*54,
+    col: pal[washer.pegsOn.length % pal.length],
+    rot:(Math.random()-0.5)*1.3, pop:0
+  });
+  S.peg(); S.point();
+  for(let i=0;i<22;i++) sparks.push({x:washer.x,y:washer.y-70,vx:(Math.random()-.5)*260,vy:-Math.random()*220-40,life:0.8,col:pal[i%pal.length]});
+  for(let i=0;i<4;i++) hearts.push({x:washer.x+(Math.random()-.5)*40,y:washer.y-90,vy:-40,life:1.2});
+  flash = 0.35;
+  if(washer.pegsOn.length >= target){
+    roundOver(sneaker);
+  } else {
+    scene = "roundwin"; sceneT = 0;
+    msg = "PEGGED! +1 for " + sneaker.who + "!";
+    sub = "Now tiptoe all the way back to the peg basket for another one…";
+    // he's happily scrubbing again — a little grace before the next look
+    LOOK.mode="wash"; LOOK.t=0; LOOK.dur=2.2*pace(); LOOK.warn=false; LOOK._pinged=false;
+    washer.turnT=0; washer.facing=0;
+  }
+}
+function getCaught(){
+  scene = "caught"; sceneT = 0;
+  sneaker.squeal = 1.9; sneaker.hop = 1.7;
+  snapFx = 1;
+  shake = 0.6;
+  for(let i=0;i<18;i++) sparks.push({x:sneaker.x,y:sneaker.y-46,vx:(Math.random()-.5)*300,vy:-Math.random()*180-30,life:0.7,col:"#ffd93d"});
+  S.snap(); setTimeout(()=>S.ow(), 140);
+  msg = "SNAP! Caught you!";
+  sub = sneaker.who + "'s undies got a twang — \"OW!\"";
+
+  // the jolt shakes one of your pegs clean off him — there goes a point!
+  if(washer.pegsOn.length > 0){
+    const lost = washer.pegsOn.pop();
+    fallers.push({
+      x: washer.x + lost.ox, y: washer.y + lost.oy,
+      vx: (Math.random()-0.5)*120 + (sneaker.x>washer.x?-40:40), vy: -90,
+      rot: lost.rot, vr: (Math.random()-0.5)*12, col: lost.col,
+      ground: washer.y + 6 + Math.random()*10
+    });
+    setTimeout(()=>{ tone(520,0.10,"square",0.12,300); }, 420);
+    sub += " …and a peg pinged right off him!";
+  }
+}
+
+function updatePlay(dt){
+  updateLook(dt);
+
+  // ----- movement -----
+  const SPD = PORTRAIT ? 250 : 168;      // longer room, longer stride
+  let mx=0, my=0, throttle=1;
+  if(humanTurn()){
+    if(down("arrowleft","a")) mx-=1;
+    if(down("arrowright","d")) mx+=1;
+    if(down("arrowup","w")) my-=1;
+    if(down("arrowdown","s")) my+=1;
+    if(!mx && !my && stick.mag > 0){     // swipe / drag steering
+      mx = stick.dx; my = stick.dy; throttle = 0.34 + stick.mag*0.66;
+    }
+    if((down(" ") || tapPeg>0) && inPegRange() && !isWatching()){ tapPeg = 0; placePeg(); return; }
+  } else {
+    const ai = aiMove(dt); mx = ai.x; my = ai.y;
+    if(ai.peg){ placePeg(); return; }
+  }
+  const len = Math.hypot(mx,my) || 1;
+  sneaker.vx = mx/len*SPD*throttle; sneaker.vy = my/len*SPD*throttle;
+  sneaker.moving = (mx||my) ? true : false;
+  if(mx) sneaker.dir = mx>0 ? 1 : -1;
+
+  sneaker.x = Math.max(48, Math.min(W-48, sneaker.x + sneaker.vx*dt));
+  sneaker.y = Math.max(SINK_Y+2, Math.min(H-30, sneaker.y + sneaker.vy*dt));
+
+  if(sneaker.moving){
+    const was = Math.floor(sneaker.walk);
+    sneaker.walk += dt*9;
+    if(Math.floor(sneaker.walk)!==was && Math.floor(sneaker.walk)%2===0) S.step();
+  } else sneaker.walk += dt*0.6;
+
+  // ----- back at the basket? grab a fresh peg -----
+  if(!sneaker.hasPeg && atPegBox()) reload();
+
+  // ----- the rule: while he's looking, be STILL or be HIDDEN -----
+  const hide = hiddenAt(sneaker.x, sneaker.y);
+  sneaker.hidden = !!hide;
+  if(isWatching() && sneaker.moving && !hide){ getCaught(); return; }
+}
+
+/* ---------- Shonty's AI sneak ---------- */
+function aiMove(dt){
+  aiThink -= dt;
+  if(aiPause>0){ aiPause -= dt; return {x:0,y:0,peg:false}; }
+
+  const watching = isWatching();
+  const warn = LOOK.warn || LOOK.mode==="turnF";
+  const hide = hiddenAt(sneaker.x, sneaker.y);
+  // out of pegs? head back to the basket instead of the sink
+  const goal = sneaker.hasPeg ? {x:washer.x, y:washer.y+58} : {x:PEGBOX.x, y:PEGBOX.y};
+
+  // reaction lag — this is how the AI gets itself caught sometimes
+  if(watching){
+    if(hide) return {x:(Math.random()-.5)*0.2, y:0, peg:false};
+    if(aiThink > 0) {            // still "reacting" -> keeps moving, risky!
+      const d = toward(goal.x, goal.y); return {x:d.x,y:d.y,peg:false};
+    }
+    return {x:0,y:0,peg:false};
+  }
+  if(warn){
+    aiThink = (1-aiSkill)*0.45;  // lag it will burn when he actually turns
+    // dive for cover if one is very close, otherwise freeze
+    let best=null, bd=1e9;
+    for(const f of FURNITURE){
+      const cx=f.hide.x+f.hide.w/2, cy=f.hide.y+f.hide.h/2;
+      const d=Math.hypot(cx-sneaker.x, cy-sneaker.y);
+      if(d<bd){ bd=d; best={cx,cy}; }
+    }
+    if(best && bd < 120*aiSkill+40 && !hide){ const d=toward(best.cx,best.cy); return {x:d.x,y:d.y,peg:false}; }
+    return {x:0,y:0,peg:false};
+  }
+  // free to move
+  if(inPegRange()){
+    if(Math.random() < 0.55) return {x:0,y:0,peg:true};
+    return {x:0,y:0,peg:false};
+  }
+  const d = toward(goal.x, goal.y);
+  return {x:d.x, y:d.y, peg:false};
+}
+function toward(tx,ty){
+  const dx=tx-sneaker.x, dy=ty-sneaker.y, l=Math.hypot(dx,dy)||1;
+  return {x:dx/l, y:dy/l};
+}
+
+/* ============================================================
+   DRAWING
+   ============================================================ */
+
+function drawRoom(t){
+  const cTop = FLOOR_TOP - 58;              // counter top
+  // wall
+  const g = ctx.createLinearGradient(0,0,0,FLOOR_TOP);
+  g.addColorStop(0,"#bfe9ff"); g.addColorStop(1,"#8fd6f5");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,FLOOR_TOP);
+  // window
+  const ww = Math.min(240, W*0.46), wh = Math.max(78, cTop-30), wx = W/2-ww/2, wy = 18;
+  ctx.fillStyle="#fff9e6"; roundRect(wx,wy,ww,wh,10,true,false);
+  ctx.fillStyle="#a8e6ff"; roundRect(wx+8,wy+8,ww-16,wh-16,7,true,false);
+  ctx.fillStyle="#ffe98a"; ctx.beginPath(); ctx.arc(wx+ww*0.29,wy+40,20,0,7); ctx.fill();
+  ctx.fillStyle="#fff";
+  for(let i=0;i<3;i++){ ctx.beginPath(); ctx.arc(wx+ww*0.58+i*24, wy+44+Math.sin(t*0.6+i)*5, 15-i*2, 0, 7); ctx.fill(); }
+  ctx.strokeStyle="#fff"; ctx.lineWidth=7;
+  ctx.beginPath();
+  ctx.moveTo(wx+ww/2,wy+4); ctx.lineTo(wx+ww/2,wy+wh-4);
+  ctx.moveTo(wx+4,wy+wh/2); ctx.lineTo(wx+ww-4,wy+wh/2); ctx.stroke();
+  // bunting
+  const flags = Math.ceil(W/62);
+  for(let i=0;i<flags;i++){
+    const x=i*62+14, y=6+Math.sin(i*0.9)*5;
+    ctx.fillStyle=["#ff6b81","#ffd93d","#6bcB77","#4d96ff","#c77dff"][i%5];
+    ctx.beginPath(); ctx.moveTo(x-14,y); ctx.lineTo(x+14,y); ctx.lineTo(x,y+24); ctx.closePath(); ctx.fill();
+  }
+  // counter + sink
+  const sx = washerSinkX();
+  ctx.fillStyle="#f3d9b8"; ctx.fillRect(0,cTop,W,58);
+  ctx.fillStyle="#e2bd91"; ctx.fillRect(0,FLOOR_TOP-10,W,10);
+  ctx.fillStyle="#cfd8e3"; roundRect(sx-92,cTop+6,184,44,8,true,false);
+  ctx.fillStyle="#9fd7f2"; roundRect(sx-84,cTop+12,168,34,6,true,false);
+  ctx.strokeStyle="#b9c4d1"; ctx.lineWidth=6; ctx.beginPath();
+  ctx.moveTo(sx,cTop+6); ctx.lineTo(sx,cTop-20);
+  ctx.arc(sx-16,cTop-20,16,0,Math.PI,true); ctx.stroke();
+  // floor
+  const cols = Math.ceil(W/70), rows = Math.ceil((H-FLOOR_TOP)/50);
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    ctx.fillStyle = ((r+c)%2) ? "#ffe6c9" : "#ffd4a8";
+    ctx.fillRect(c*70, FLOOR_TOP + r*50, 70, 50);
+  }
+  ctx.fillStyle="rgba(255,255,255,.18)"; ctx.fillRect(0,FLOOR_TOP,W,H-FLOOR_TOP);
+}
+function washerSinkX(){ return W/2; }
+
+function drawFurniture(f){
+  ctx.save();
+  ctx.fillStyle="rgba(120,70,30,.16)";
+  ctx.beginPath(); ctx.ellipse(f.x+f.w/2, f.y+f.h+6, f.w*0.55, 12, 0,0,7); ctx.fill();
+  if(f.kind==="table"){
+    ctx.fillStyle="#c98a53"; roundRect(f.x,f.y,f.w,f.h,10,true,false);
+    ctx.fillStyle="#e0a86b"; roundRect(f.x+6,f.y+5,f.w-12,f.h-16,8,true,false);
+    ctx.fillStyle="#a86f3d"; ctx.fillRect(f.x+14,f.y+f.h,12,20); ctx.fillRect(f.x+f.w-26,f.y+f.h,12,20);
+    // fruit bowl
+    ctx.fillStyle="#fff"; ctx.beginPath(); ctx.ellipse(f.x+f.w/2,f.y+16,34,13,0,0,7); ctx.fill();
+    ctx.fillStyle="#ff6b6b"; ctx.beginPath(); ctx.arc(f.x+f.w/2-10,f.y+8,10,0,7); ctx.fill();
+    ctx.fillStyle="#ffd93d"; ctx.beginPath(); ctx.arc(f.x+f.w/2+8,f.y+9,9,0,7); ctx.fill();
+  } else if(f.kind==="plant"){
+    ctx.fillStyle="#5ec269";
+    for(let i=0;i<7;i++){ const a=-Math.PI/2+(i-3)*0.38;
+      ctx.save(); ctx.translate(f.x+f.w/2,f.y+24); ctx.rotate(a);
+      ctx.beginPath(); ctx.ellipse(0,-30,13,32,0,0,7); ctx.fill(); ctx.restore(); }
+    ctx.fillStyle="#e07a5f"; roundRect(f.x+14,f.y+24,f.w-28,f.h-24,8,true,false);
+  } else if(f.kind==="basket"){
+    ctx.fillStyle="#e8c07d"; roundRect(f.x,f.y,f.w,f.h,12,true,false);
+    ctx.strokeStyle="#c79a54"; ctx.lineWidth=3;
+    for(let i=1;i<5;i++){ ctx.beginPath(); ctx.moveTo(f.x+i*20,f.y); ctx.lineTo(f.x+i*20,f.y+f.h); ctx.stroke(); }
+    ctx.fillStyle="#ff8fab"; ctx.beginPath(); ctx.ellipse(f.x+30,f.y+2,26,12,0,0,7); ctx.fill();
+    ctx.fillStyle="#9ad0ff"; ctx.beginPath(); ctx.ellipse(f.x+72,f.y+1,22,11,0,0,7); ctx.fill();
+  } else if(f.kind==="chair"){
+    ctx.fillStyle="#8bc7e8"; roundRect(f.x,f.y-34,f.w,34,8,true,false);
+    ctx.fillStyle="#69aed3"; roundRect(f.x,f.y,f.w,f.h-16,8,true,false);
+    ctx.fillStyle="#4f8fb3"; ctx.fillRect(f.x+8,f.y+f.h-16,10,18); ctx.fillRect(f.x+f.w-18,f.y+f.h-16,10,18);
+  } else if(f.kind==="rug"){
+    ctx.fillStyle="#c9a7ff"; ctx.beginPath(); ctx.ellipse(f.x+f.w/2,f.y+f.h/2,f.w/2,f.h/2,0,0,7); ctx.fill();
+    ctx.fillStyle="#e6d4ff"; ctx.beginPath(); ctx.ellipse(f.x+f.w/2,f.y+f.h/2,f.w/3,f.h/3,0,0,7); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ----- people ----- */
+function drawPerson(p, opts){
+  const o = opts||{};
+  const facing = p.facing;                 // 0 back .. 1 front
+  const sx = Math.cos(facing*Math.PI);     // +1 back, -1 front
+  const squish = Math.max(0.16, Math.abs(sx));
+  const front = sx < 0;
+  const bob = p.moving ? Math.abs(Math.sin(p.walk))*3 : Math.sin(p.walk*0.9)*1.4;
+  const hopY = p.hop>0 ? -Math.abs(Math.sin((1-p.hop)*Math.PI*3))*16*p.hop : 0;
+  const swing = p.moving ? Math.sin(p.walk)*11 : (o.scrub ? Math.sin(p.walk*3)*7 : Math.sin(p.walk*0.9)*2);
+
+  const isC = p.who==="Cushla";
+  const skin  = isC ? "#ffd7b8" : "#c08a5e";
+  const skinD = isC ? "#f0bd97" : "#a26f47";
+  const top   = isC ? "#e63946" : "#2fa8a0";
+  const topD  = isC ? "#c22a37" : "#238e88";
+  const pants = isC ? "#3d4f8a" : "#4a5568";
+  const hair  = isC ? "#ffd45e" : "#241610";
+
+  ctx.save();
+  ctx.translate(p.x, p.y + hopY);
+
+  // shadow
+  ctx.fillStyle="rgba(90,50,20,.20)";
+  ctx.beginPath(); ctx.ellipse(0,4,26,9,0,0,7); ctx.fill();
+
+  // legs
+  ctx.fillStyle = pants;
+  roundRect(-15 + swing*0.4, -34, 13, 36, 6, true, false);
+  roundRect(  3 - swing*0.4, -34, 13, 36, 6, true, false);
+  ctx.fillStyle = isC ? "#ffffff" : "#2d3748";
+  roundRect(-17 + swing*0.4, 0, 17, 9, 4, true, false);
+  roundRect(  2 - swing*0.4, 0, 17, 9, 4, true, false);
+
+  ctx.save();
+  ctx.scale(squish, 1);   // horizontal squash sells the spin
+
+  // body
+  ctx.fillStyle = top;
+  roundRect(-24, -86+bob, 48, 56, 14, true, false);
+  ctx.fillStyle = topD;
+  roundRect(-24, -40+bob, 48, 10, 6, true, false);
+  if(isC){ // little skirt hem
+    ctx.fillStyle="#ff8fa3"; roundRect(-26,-44+bob,52,10,5,true,false);
+  }
+
+  // arms
+  ctx.fillStyle = top;
+  const armY = -80+bob;
+  if(o.scrub){
+    roundRect(-34, armY, 13, 34, 6, true, false);
+    roundRect( 21, armY, 13, 34, 6, true, false);
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(-27, armY+36+Math.sin(p.walk*6)*3, 7,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc( 27, armY+36-Math.sin(p.walk*6)*3, 7,0,7); ctx.fill();
+  } else {
+    ctx.save(); ctx.translate(-27, armY+4); ctx.rotate(swing*0.02);
+    roundRect(-6,0,13,32,6,true,false);
+    ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(0,34,7,0,7); ctx.fill(); ctx.restore();
+    ctx.fillStyle = top;
+    ctx.save(); ctx.translate(27, armY+4); ctx.rotate(-swing*0.02);
+    roundRect(-6,0,13,32,6,true,false);
+    ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(0,34,7,0,7); ctx.fill(); ctx.restore();
+  }
+
+  // pegs clipped to the back / front of the top
+  for(const pg of p.pegsOn){
+    const px = front ? -pg.ox : pg.ox;
+    ctx.save(); ctx.translate(px, pg.oy+bob); ctx.rotate(pg.rot);
+    const s = 1 + Math.max(0, pg.pop)*0.9; ctx.scale(s,s);
+    ctx.fillStyle = pg.col; roundRect(-5,-12,10,24,3,true,false);
+    ctx.fillStyle = "rgba(255,255,255,.55)"; roundRect(-3,-10,3,20,2,true,false);
+    ctx.fillStyle = "rgba(0,0,0,.22)"; ctx.fillRect(-5,-2,10,3);
+    ctx.restore();
+  }
+
+  // head
+  const hy = -104+bob;
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.ellipse(0, hy, 21, 23, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = skinD;
+  ctx.beginPath(); ctx.ellipse(0, hy+20, 8, 5, 0, 0, 7); ctx.fill(); // neck shade
+
+  if(front){
+    // ears
+    ctx.fillStyle=skin; ctx.beginPath(); ctx.arc(-21,hy+2,5,0,7); ctx.arc(21,hy+2,5,0,7); ctx.fill();
+    // eyes
+    ctx.fillStyle="#fff";
+    ctx.beginPath(); ctx.ellipse(-8,hy-2,6,7,0,0,7); ctx.ellipse(8,hy-2,6,7,0,0,7); ctx.fill();
+    ctx.fillStyle = isC ? "#2f80ed" : "#3b2417";
+    const ex = (o.scan||0)*3;
+    ctx.beginPath(); ctx.arc(-8+ex,hy-1,3.4,0,7); ctx.arc(8+ex,hy-1,3.4,0,7); ctx.fill();
+    ctx.fillStyle="#fff";
+    ctx.beginPath(); ctx.arc(-9.4+ex,hy-2.6,1.3,0,7); ctx.arc(6.6+ex,hy-2.6,1.3,0,7); ctx.fill();
+    // brows
+    ctx.strokeStyle = isC ? "#e0ac33" : "#1b0f09"; ctx.lineWidth=2.6; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(-13,hy-11); ctx.lineTo(-3,hy-13);
+    ctx.moveTo(3,hy-13); ctx.lineTo(13,hy-11); ctx.stroke();
+    // blush
+    ctx.fillStyle="rgba(255,120,120,.35)";
+    ctx.beginPath(); ctx.ellipse(-14,hy+7,5,3.4,0,0,7); ctx.ellipse(14,hy+7,5,3.4,0,0,7); ctx.fill();
+
+    if(isC){
+      ctx.strokeStyle="#8a4b3a"; ctx.lineWidth=2.4;
+      ctx.beginPath();
+      if(p.squeal>0){ ctx.arc(0,hy+9,6,0,Math.PI*2); ctx.fillStyle="#c0483f"; ctx.fill(); }
+      else ctx.arc(0,hy+6,7,0.15*Math.PI,0.85*Math.PI);
+      ctx.stroke();
+    } else {
+      // neat beard hugging the jaw — leaves cheeks and forehead bare
+      ctx.fillStyle="#33200f";
+      ctx.beginPath(); ctx.ellipse(0,hy+7,19.5,16,0,0,Math.PI); ctx.fill();   // lower half only
+      ctx.beginPath(); ctx.ellipse(-18.5,hy+2,4.5,9,0,0,7);                   // sideburns
+      ctx.ellipse( 18.5,hy+2,4.5,9,0,0,7); ctx.fill();
+      // great big smile
+      ctx.fillStyle="#4a2b16";
+      ctx.beginPath(); ctx.ellipse(0,hy+12,10,7,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
+      ctx.fillStyle="#fff";
+      ctx.beginPath(); ctx.ellipse(0,hy+12,9,4.6,0,0.05*Math.PI,0.95*Math.PI); ctx.fill();
+      ctx.fillStyle="#33200f"; // moustache, sitting just above the smile
+      ctx.beginPath(); ctx.ellipse(-6,hy+7,8,4,0.28,0,7); ctx.ellipse(6,hy+7,8,4,-0.28,0,7); ctx.fill();
+      // glasses — pale lens fill first so the dark frame really pops
+      ctx.fillStyle="rgba(225,245,255,.55)";
+      ctx.beginPath(); ctx.arc(-8,hy-2,8.5,0,7); ctx.fill();
+      ctx.beginPath(); ctx.arc( 8,hy-2,8.5,0,7); ctx.fill();
+      ctx.strokeStyle="#14181f"; ctx.lineWidth=3.4;
+      ctx.beginPath(); ctx.arc(-8,hy-2,8.5,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.arc( 8,hy-2,8.5,0,7); ctx.stroke();
+      ctx.lineWidth=3; ctx.beginPath();
+      ctx.moveTo(-1.2,hy-3); ctx.lineTo(1.2,hy-3);
+      ctx.moveTo(-16.5,hy-3); ctx.lineTo(-21,hy-5); ctx.moveTo(16.5,hy-3); ctx.lineTo(21,hy-5); ctx.stroke();
+      ctx.fillStyle="rgba(255,255,255,.28)";
+      ctx.beginPath(); ctx.arc(-10,hy-5,3,0,7); ctx.arc(6,hy-5,3,0,7); ctx.fill();
+    }
+  }
+
+  // hair (drawn for both views)
+  ctx.fillStyle = hair;
+  if(isC){
+    ctx.beginPath(); ctx.ellipse(0,hy-6,23,20,0,Math.PI,0); ctx.fill();
+    if(front){
+      ctx.beginPath(); ctx.moveTo(-23,hy-6); ctx.quadraticCurveTo(-27,hy+16,-19,hy+22);
+      ctx.quadraticCurveTo(-24,hy+2,-20,hy-8); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(23,hy-6); ctx.quadraticCurveTo(27,hy+16,19,hy+22);
+      ctx.quadraticCurveTo(24,hy+2,20,hy-8); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(-6,hy-14,15,8,-0.25,Math.PI,0); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.ellipse(0,hy+2,23,26,0,0,7); ctx.fill();       // long blonde back
+      ctx.fillStyle="#ffe28a";
+      ctx.beginPath(); ctx.ellipse(-7,hy-2,7,16,0.15,0,7); ctx.fill();
+    }
+    // bow
+    ctx.fillStyle="#ff5d8f";
+    ctx.beginPath(); ctx.ellipse(16,hy-17,7,5,0.5,0,7); ctx.ellipse(25,hy-14,7,5,-0.4,0,7); ctx.fill();
+    ctx.fillStyle="#ffd1e0"; ctx.beginPath(); ctx.arc(20.5,hy-15.5,2.6,0,7); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.ellipse(0,hy-8,22,17,0,Math.PI,0); ctx.fill();
+    ctx.fillRect(-22,hy-10,44,6);
+    if(!front){ ctx.beginPath(); ctx.ellipse(0,hy-4,22,19,0,0,7); ctx.fill(); }
+  }
+  ctx.restore(); // squish
+
+  // little "!" when he's about to turn
+  if(o.warn){
+    ctx.save(); ctx.translate(26, -136+bob);
+    ctx.fillStyle="#fff"; ctx.strokeStyle="#ff8b3d"; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(0,0,15,0,7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle="#ff6b35"; ctx.font="bold 22px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText("?",0,1); ctx.restore();
+  }
+  if(o.eyeing){
+    ctx.save(); ctx.translate(0,-150+bob);
+    ctx.fillStyle="rgba(255,90,90,.9)"; ctx.font="bold 17px Arial"; ctx.textAlign="center";
+    ctx.fillText("👀 LOOKING!",0,0); ctx.restore();
+  }
+  if(p.squeal>0){
+    const s = Math.min(1, p.squeal*1.6);
+    ctx.save(); ctx.translate(38,-128+bob); ctx.scale(s,s);
+    ctx.fillStyle="#fff"; ctx.strokeStyle="#e63946"; ctx.lineWidth=3;
+    roundRect(-34,-24,68,40,12,true,true);
+    ctx.beginPath(); ctx.moveTo(-16,14); ctx.lineTo(-26,28); ctx.lineTo(-4,16); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle="#e63946"; ctx.font="bold 24px Comic Sans MS, Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText("ow!",0,-3);
+    ctx.restore();
+    // motion squiggles
+    ctx.strokeStyle="rgba(230,57,70,.8)"; ctx.lineWidth=3; ctx.lineCap="round";
+    for(let i=0;i<3;i++){
+      const a=-0.6+i*0.6, r=34+Math.sin(p.squeal*22)*4;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*r*-1-10,-52); ctx.lineTo(Math.cos(a)*r*-1-22,-58-i*6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*r+10,-52); ctx.lineTo(Math.cos(a)*r+22,-58-i*6); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/* ----- hud ----- */
+function drawHUD(){
+  ctx.save();
+  const pad = PORTRAIT ? 10 : 18;
+  const bw = Math.min(300, (W - pad*2 - 76) / 2);
+  ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(pad,12,bw,54,16,true,false);
+  ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(W-pad-bw,12,bw,54,16,true,false);
+  drawScore(pad+12,      24, bw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla);
+  drawScore(W-pad-bw+12, 24, bw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty);
+  // round / match-wins strip
+  ctx.textAlign="center"; ctx.textBaseline="top";
+  ctx.fillStyle="rgba(255,255,255,.85)";
+  const rw = PORTRAIT ? 180 : 220;
+  roundRect(W/2-rw/2, 12, rw, 26, 13, true, false);
+  ctx.fillStyle="#8a5a2a"; ctx.font="bold 14px Comic Sans MS, Arial";
+  ctx.fillText(roundName() + "  •  rounds " + wins.Cushla + "–" + wins.Shonty, W/2, 17);
+  // pause button
+  const b = pauseBtn();
+  ctx.fillStyle="rgba(255,255,255,.9)"; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill();
+  ctx.fillStyle="#4d96ff";
+  if(paused){ ctx.beginPath(); ctx.moveTo(b.x-b.r*0.3,b.y-b.r*0.42); ctx.lineTo(b.x+b.r*0.46,b.y); ctx.lineTo(b.x-b.r*0.3,b.y+b.r*0.42); ctx.closePath(); ctx.fill(); }
+  else { ctx.fillRect(b.x-b.r*0.36,b.y-b.r*0.44,b.r*0.26,b.r*0.88); ctx.fillRect(b.x+b.r*0.10,b.y-b.r*0.44,b.r*0.26,b.r*0.88); }
+  ctx.restore();
+}
+function drawScore(x,y,bw,name,col,n,active){
+  const small = bw < 250;
+  ctx.fillStyle=col; ctx.font="bold "+(small?16:20)+"px Comic Sans MS, Arial";
+  ctx.textAlign="left"; ctx.textBaseline="top";
+  ctx.fillText(name, x, y+2);
+  const dr = small ? 8 : 10, gap = small ? 22 : 30, x0 = x + (small ? 76 : 108);
+  for(let i=0;i<TARGET;i++){
+    const cx=x0+i*gap, cy=y+14;
+    ctx.beginPath(); ctx.arc(cx,cy,dr,0,7);
+    ctx.fillStyle = i<n ? col : "rgba(0,0,0,.10)"; ctx.fill();
+    if(i<n){ ctx.fillStyle="rgba(255,255,255,.6)"; ctx.beginPath(); ctx.arc(cx-3,cy-3,2.6,0,7); ctx.fill(); }
+  }
+  if(active){
+    ctx.fillStyle=col; ctx.font="bold "+(small?11:12)+"px Arial";
+    ctx.fillText("▶ sneaking", x, y+(small?24:26));
+  }
+}
+
+function banner(title, subtitle, col){
+  ctx.save();
+  ctx.fillStyle="rgba(0,0,0,.28)"; ctx.fillRect(0,0,W,H);
+  const bw=Math.min(640, W-40), bh=PORTRAIT?208:176, bx=(W-bw)/2, by=(H-bh)/2-10;
+  ctx.fillStyle="#fff"; ctx.strokeStyle=col; ctx.lineWidth=7;
+  roundRect(bx,by,bw,bh,26,true,true);
+  ctx.textAlign="center";
+  ctx.fillStyle=col; ctx.font="bold "+(PORTRAIT?30:40)+"px Comic Sans MS, Arial";
+  wrapText(title, W/2, by+(PORTRAIT?54:66), bw-50, 34);
+  ctx.fillStyle="#7a5a3a"; ctx.font=(PORTRAIT?16:18)+"px Comic Sans MS, Arial";
+  wrapText(subtitle, W/2, by+(PORTRAIT?106:104), bw-60, 24);
+  if(readyWait){
+    ctx.fillStyle = (Math.sin(T*5)>0) ? col : "#ff8b3d";
+    ctx.font="bold "+(PORTRAIT?19:21)+"px Comic Sans MS, Arial";
+    ctx.fillText(TOUCH?"tap when you're ready!":"press ENTER when you're ready!", W/2, by+bh-22);
+  }
+  ctx.restore();
+}
+function wrapText(text,x,y,maxW,lh){
+  const words=text.split(" "); let line="", yy=y;
+  for(const w of words){
+    const test=line+w+" ";
+    if(ctx.measureText(test).width>maxW && line){ ctx.fillText(line,x,yy); line=w+" "; yy+=lh; }
+    else line=test;
+  }
+  ctx.fillText(line,x,yy);
+}
+function roundRect(x,y,w,h,r,fill,stroke){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  if(fill) ctx.fill(); if(stroke) ctx.stroke();
+}
+
+/* ---------- particles ---------- */
+function updateFx(dt){
+  bubbles = bubbles.filter(b=>(b.life-=dt)>0);
+  bubbles.forEach(b=>{ b.y+=b.vy*dt; b.x+=b.vx*dt; });
+  sparks = sparks.filter(s=>(s.life-=dt)>0);
+  sparks.forEach(s=>{ s.x+=s.vx*dt; s.y+=s.vy*dt; s.vy+=520*dt; });
+  hearts = hearts.filter(h=>(h.life-=dt)>0);
+  hearts.forEach(h=>{ h.y+=h.vy*dt; });
+  confetti.forEach(c=>{ c.y+=c.vy*dt; c.x+=c.vx*dt; c.rot+=c.vr*dt; if(c.y>H+20){ c.y=-20; } });
+  if(shake>0) shake-=dt; if(flash>0) flash-=dt; if(snapFx>0) snapFx-=dt*0.62;
+  if(tapPeg>0) tapPeg-=dt;
+  // pegs that pinged off, tumbling to the floor
+  for(let i=fallers.length-1;i>=0;i--){
+    const f = fallers[i];
+    f.x += f.vx*dt; f.y += f.vy*dt; f.vy += 900*dt; f.rot += f.vr*dt;
+    if(f.y >= f.ground){
+      floorPegs.push({x:f.x, y:f.ground, rot:Math.PI/2 + (Math.random()-.5)*0.7, col:f.col});
+      fallers.splice(i,1);
+    }
+  }
+  [cushla,shonty].forEach(p=>{
+    if(p.squeal>0) p.squeal-=dt;
+    if(p.hop>0) p.hop-=dt*1.6;
+    p.pegsOn.forEach(pg=>{ if(pg.pop<1) pg.pop = Math.min(1, pg.pop+dt*4); });
+  });
+}
+function drawPeg(x,y,rot,col,scale){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rot); if(scale) ctx.scale(scale,scale);
+  ctx.fillStyle=col; roundRect(-5,-12,10,24,3,true,false);
+  ctx.fillStyle="rgba(255,255,255,.55)"; roundRect(-3,-10,3,20,2,true,false);
+  ctx.fillStyle="rgba(0,0,0,.22)"; ctx.fillRect(-5,-2,10,3);
+  ctx.restore();
+}
+function drawFx(){
+  floorPegs.forEach(p=>{
+    ctx.fillStyle="rgba(120,70,30,.16)";
+    ctx.beginPath(); ctx.ellipse(p.x,p.y+3,13,4,0,0,7); ctx.fill();
+    drawPeg(p.x,p.y,p.rot,p.col,0.9);
+  });
+  fallers.forEach(f=> drawPeg(f.x,f.y,f.rot,f.col,1));
+  bubbles.forEach(b=>{ ctx.fillStyle="rgba(255,255,255,.75)"; ctx.strokeStyle="rgba(150,220,255,.9)"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill(); ctx.stroke(); });
+  sparks.forEach(s=>{ ctx.fillStyle=s.col; ctx.globalAlpha=Math.min(1,s.life*1.6);
+    ctx.fillRect(s.x,s.y,5,5); ctx.globalAlpha=1; });
+  hearts.forEach(h=>{ ctx.globalAlpha=Math.min(1,h.life); ctx.fillStyle="#ff7aa2"; ctx.font="20px Arial";
+    ctx.textAlign="center"; ctx.fillText("♥",h.x,h.y); ctx.globalAlpha=1; });
+  confetti.forEach(c=>{ ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.rot); ctx.fillStyle=c.col;
+    ctx.fillRect(-c.r/2,-c.r/2,c.r,c.r*1.6); ctx.restore(); });
+}
+
+/* the peg basket you reload from */
+function drawPegBox(t){
+  const x = PEGBOX.x, y = PEGBOX.y;
+  const need = scene==="play" && !sneaker.hasPeg;
+  ctx.save();
+  ctx.fillStyle="rgba(120,70,30,.18)";
+  ctx.beginPath(); ctx.ellipse(x,y+4,50,13,0,0,7); ctx.fill();
+  if(need){                                  // glow when you need to come back
+    const a = 0.25 + Math.sin(t*6)*0.18;
+    ctx.fillStyle = "rgba(120,220,150,"+a+")";
+    ctx.beginPath(); ctx.ellipse(x,y-8,74,40,0,0,7); ctx.fill();
+  }
+  // pegs poking out of the top
+  for(let i=0;i<9;i++){
+    const px = x-34 + i*8.5, ph = 16 + ((i*37)%11);
+    ctx.save(); ctx.translate(px, y-30); ctx.rotate((i%3-1)*0.22);
+    ctx.fillStyle = PEG_COLS[i % PEG_COLS.length];
+    roundRect(-4,-ph,8,ph+8,3,true,false);
+    ctx.fillStyle="rgba(255,255,255,.5)"; roundRect(-2.5,-ph+2,2.5,ph,1.5,true,false);
+    ctx.restore();
+  }
+  // wicker basket
+  ctx.fillStyle="#e8c07d"; roundRect(x-44,y-32,88,34,10,true,false);
+  ctx.strokeStyle="#c79a54"; ctx.lineWidth=3;
+  for(let i=1;i<5;i++){ ctx.beginPath(); ctx.moveTo(x-44+i*17.6,y-32); ctx.lineTo(x-44+i*17.6,y+2); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(x-44,y-22); ctx.lineTo(x+44,y-22); ctx.stroke();
+  ctx.fillStyle="#b98741"; roundRect(x-46,y-34,92,8,4,true,false);
+  ctx.restore();
+}
+
+function drawStick(){
+  if(!stick.on) return;
+  ctx.save();
+  ctx.strokeStyle="rgba(255,255,255,.75)"; ctx.lineWidth=4;
+  ctx.fillStyle="rgba(120,80,160,.16)";
+  ctx.beginPath(); ctx.arc(stick.ox, stick.oy, STICK_MAX, 0, 7); ctx.fill(); ctx.stroke();
+  const kx = stick.ox + stick.dx*stick.mag*STICK_MAX;
+  const ky = stick.oy + stick.dy*stick.mag*STICK_MAX;
+  ctx.fillStyle = stick.mag>0 ? "rgba(255,215,80,.92)" : "rgba(255,255,255,.85)";
+  ctx.strokeStyle="rgba(230,57,70,.85)"; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(kx, ky, 26, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function drawPause(){
+  ctx.save();
+  ctx.fillStyle="rgba(30,20,50,.45)"; ctx.fillRect(0,0,W,H);
+  const bw=Math.min(420, W-60), bh=252, bx=(W-bw)/2, by=(H-bh)/2;
+  ctx.fillStyle="#fff"; ctx.strokeStyle="#4d96ff"; ctx.lineWidth=7;
+  roundRect(bx,by,bw,bh,26,true,true);
+  ctx.textAlign="center";
+  ctx.fillStyle="#4d96ff"; ctx.font="bold 36px Comic Sans MS, Arial";
+  ctx.fillText("⏸  Paused", W/2, by+52);
+  const rows = TOUCH
+    ? [["▶","keep playing"],["↺","restart the match"],["♪","music "+(MUS.on?"off":"on")],["🔈","sound "+(muted?"on":"off")],["✕","back to the title"]]
+    : [["P / ESC","keep playing"],["R","restart the match"],["N","music on / off"],["M","mute everything"],["Q","back to the title"]];
+  rows.forEach((r,i)=>{
+    const y = by+92+i*30;
+    if(TOUCH){ ctx.fillStyle="rgba(77,150,255,.10)"; roundRect(bx+16,y,bw-32,28,10,true,false); }
+    ctx.textAlign="left";
+    ctx.fillStyle="#e63946"; ctx.font="bold 17px Comic Sans MS, Arial"; ctx.fillText(r[0], bx+36, y+20);
+    ctx.fillStyle="#7a5a3a"; ctx.font="16px Comic Sans MS, Arial"; ctx.fillText(r[1], bx+(TOUCH?92:150), y+20);
+  });
+  if(TOUCH){
+    ctx.textAlign="center"; ctx.fillStyle="#a08a70"; ctx.font="13px Comic Sans MS, Arial";
+    ctx.fillText("tap a row, or anywhere else to resume", W/2, by+bh-14);
+  }
+  ctx.restore();
+}
+
+function drawSnapFx(){
+  if(snapFx<=0) return;
+  const grow = Math.min(1, (1-snapFx)*5);
+  const s = grow * (1 + Math.sin(snapFx*30)*0.05) * Math.min(1, snapFx*3.2);
+  ctx.save();
+  ctx.translate(sneaker.x - 66, sneaker.y - 132);
+  ctx.rotate(-0.22 + Math.sin(snapFx*24)*0.05);
+  ctx.scale(s,s);
+  ctx.fillStyle="#ffd93d"; ctx.strokeStyle="#e63946"; ctx.lineWidth=5; ctx.lineJoin="round";
+  ctx.beginPath();
+  for(let i=0;i<14;i++){
+    const a = i/14*Math.PI*2, r = (i%2 ? 30 : 58);
+    const x=Math.cos(a)*r*1.25, y=Math.sin(a)*r*0.85;
+    i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle="#e63946"; ctx.font="bold 30px Comic Sans MS, Arial";
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText("SNAP!",0,1);
+  ctx.restore();
+}
+
+/* ---------- title ---------- */
+function titleCard(){
+  const bw = Math.min(680, W-52), bh = PORTRAIT ? 530 : 486;
+  return {bw, bh, bx:(W-bw)/2, by:(PORTRAIT ? H*0.17 : 56)};
+}
+function musicBtn(){
+  const c = titleCard(), w = 148, h = 32;
+  return {x: c.bx + c.bw - w - 18, y: c.by + 16, w, h};
+}
+function titleBtns(){
+  const c = titleCard(), y = c.by + c.bh - 88;
+  const gap = 16, bw = Math.min(280, (c.bw - 60 - gap)/2), h = 56;
+  const x0 = c.bx + (c.bw - (bw*2+gap))/2;
+  return [
+    {x:x0,          y, w:bw, h, label:"1 PLAYER",  sub:"you vs Shonty",     mode:"solo"},
+    {x:x0+bw+gap,   y, w:bw, h, label:"2 PLAYERS", sub:"pass & play",       mode:"duo"}
+  ];
+}
+function drawTitle(t){
+  ctx.fillStyle="rgba(0,0,0,.30)"; ctx.fillRect(0,0,W,H);
+  ctx.save(); ctx.textAlign="center";
+  const bob = Math.sin(t*2)*6;
+  const c = titleCard();
+  const bw = c.bw, bh = c.bh, bx = c.bx, by = c.by;
+  ctx.fillStyle="#fff"; ctx.strokeStyle="#e63946"; ctx.lineWidth=8;
+  roundRect(bx,by,bw,bh,32,true,true);
+  ctx.fillStyle="#e63946"; ctx.font="bold "+(PORTRAIT?42:54)+"px Comic Sans MS, Arial";
+  ctx.fillText("Cushla Mushla", W/2, by+(PORTRAIT?70:78));
+  ctx.fillStyle="#2fa8a0"; ctx.font="bold "+(PORTRAIT?18:22)+"px Comic Sans MS, Arial";
+  ctx.fillText("…the great kitchen peg caper!", W/2, by+(PORTRAIT?102:114));
+
+  const lines = TOUCH ? [
+    "🧺  Shonty is doing the dishes. Sneak up behind him…",
+    "👆  SWIPE and HOLD to creep — the further you drag,",
+    "      the faster she goes. LET GO and she freezes.",
+    "👀  When he spins round: let go, or hide in a shady",
+    "      pocket behind the table, plant, chair or basket.",
+    "🎨  TAP when you're right behind him to clip a peg on. +1!",
+    "😖  Caught? SNAP go the undies — and a peg pings off!",
+    "🧺  Out of pegs? Sneak back to the basket for another.",
+    "🏆  First to " + TARGET + " takes the round. Best of two rounds!"
+  ] : [
+    "🧺  Shonty is doing the dishes. Sneak up behind him…",
+    "🎨  …and SPACE to clip a colourful peg on his back. +1 point!",
+    "👀  He looks around a lot. When he does: STOP MOVING, or hide",
+    "      in the shady pocket behind the table, plant, chair or basket.",
+    "😖  Caught? He twangs your undies — SNAP! — and a peg pings off!",
+    "🧺  Out of pegs? Sneak all the way back to the basket for another.",
+    "🏆  First to " + TARGET + " takes the round. You play two rounds so each",
+    "      of you gets to sneak first — then a Golden Peg decider if it's 1–1."
+  ];
+  ctx.fillStyle="#7a5a3a"; ctx.font=(PORTRAIT?15:17)+"px Comic Sans MS, Arial"; ctx.textAlign="left";
+  const lh = PORTRAIT ? 25 : 27;
+  lines.forEach((l,i)=> ctx.fillText(l, bx+(PORTRAIT?20:44), by+(PORTRAIT?142:160)+i*lh));
+
+  // music toggle — off by default, so make it easy to find
+  const mb = musicBtn();
+  ctx.fillStyle = MUS.on ? "#6bcB77" : "rgba(0,0,0,.10)";
+  roundRect(mb.x, mb.y, mb.w, mb.h, 16, true, false);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle = MUS.on ? "#fff" : "#9b8a76";
+  ctx.font="bold 14px Comic Sans MS, Arial";
+  ctx.fillText((MUS.on ? "♪  Music on" : "♪  Music off"), mb.x+mb.w/2, mb.y+mb.h/2+1);
+  ctx.textBaseline="alphabetic";
+
+  // mode buttons
+  ctx.textAlign="center";
+  titleBtns().forEach((b,i)=>{
+    ctx.fillStyle = i===0 ? "#e63946" : "#2fa8a0";
+    roundRect(b.x,b.y,b.w,b.h,16,true,false);
+    ctx.fillStyle="rgba(255,255,255,.25)"; roundRect(b.x+4,b.y+4,b.w-8,b.h*0.42,12,true,false);
+    ctx.fillStyle="#fff"; ctx.font="bold 20px Comic Sans MS, Arial";
+    ctx.fillText(b.label, b.x+b.w/2, b.y+b.h/2+1);
+    ctx.font="12px Comic Sans MS, Arial"; ctx.fillStyle="rgba(255,255,255,.85)";
+    ctx.fillText(b.sub, b.x+b.w/2, b.y+b.h-9);
+  });
+  ctx.fillStyle="#a08a70"; ctx.font=(PORTRAIT?12:13)+"px Comic Sans MS, Arial";
+  ctx.fillText(TOUCH ? "⏸ top-right to pause, restart or mute"
+                     : "1 / 2 or ENTER to start  •  P pause  •  R restart  •  N music  •  M mute",
+               W/2, by+bh-14);
+  ctx.restore();
+  // mascots
+  const my = PORTRAIT ? H-70 : 560;
+  const mC = {who:"Cushla", x:W*0.17, y:my, walk:t*4, moving:true, facing:1, pegsOn:[], squeal:0, hop:0, dir:1};
+  const mS = {who:"Shonty", x:W*0.83, y:my, walk:t*4, moving:true, facing:1, pegsOn:[], squeal:0, hop:0, dir:1};
+  drawPerson(mC,{}); drawPerson(mS,{});
+}
+
+/* ---------- main loop ---------- */
+let last = performance.now(), T = 0;
+function frame(now){
+  let dt = Math.min(0.05, (now-last)/1000); last = now;
+  musicTick();
+  if(paused) dt = 0; else T += dt;
+  sceneT += dt;
+
+  if(paused){ /* everything frozen — just keep rendering */ }
+  else if(scene==="play") updatePlay(dt);
+  else if(scene==="intro"){ updateLook(dt); if(!readyWait && sceneT>2.0){ scene="play"; sceneT=0; } }
+  else if(scene==="caught"){
+    if(sceneT>3.6){
+      sneaker = (sneaker===cushla) ? shonty : cushla;
+      washer  = (washer===cushla)  ? shonty : cushla;
+      beginTurn(false);
+    }
+  }
+  // no teleport home — you have to sneak back to the basket yourself
+  else if(scene==="roundwin"){ if(sceneT>1.6){ scene="play"; sceneT=0; } }
+  else if(scene==="gamewin" && !readyWait && sceneT>2.4){ confirm_(); }
+  updateFx(dt);
+
+  // ---- render ----
+  ctx.save();
+  if(shake>0){ const s=shake*14; ctx.translate((Math.random()-.5)*s,(Math.random()-.5)*s); }
+  drawRoom(T);
+
+  // hiding pockets (subtle shading so the player can read them)
+  FURNITURE.forEach(f=>{
+    const on = scene==="play" && sneaker.hidden && hiddenAt(sneaker.x,sneaker.y)===f;
+    ctx.fillStyle = on ? "rgba(80,220,140,.30)" : "rgba(60,40,90,.09)";
+    roundRect(f.hide.x, f.hide.y, f.hide.w, f.hide.h, 16, true, false);
+  });
+
+  if(scene!=="title"){
+    // depth sort: washer is always at the sink (top), sneaker + furniture sort by y
+    const items = [];
+    items.push({y: washer.y, d:()=>drawPerson(washer,{
+      scrub: LOOK.mode==="wash",
+      warn: LOOK.warn || LOOK.mode==="turnF",
+      eyeing: LOOK.mode==="look",
+      scan: Math.sin(T*3)
+    })});
+    items.push({y: sneaker.y, d:()=>{
+      ctx.save();
+      if(scene==="play" && sneaker.hidden) ctx.globalAlpha = 0.55;
+      drawPerson(sneaker,{});
+      ctx.restore();
+      // the peg she's carrying, held up ready to clip on
+      if(sneaker.hasPeg && scene!=="caught"){
+        const col = PEG_COLS[(sneaker===cushla?shonty:cushla).pegsOn.length % PEG_COLS.length];
+        ctx.save();
+        ctx.translate(sneaker.x + 30*sneaker.dir, sneaker.y - 58 + Math.sin(T*4)*2);
+        ctx.rotate(0.5*sneaker.dir);
+        ctx.fillStyle=col; roundRect(-5,-13,10,26,3,true,false);
+        ctx.fillStyle="rgba(255,255,255,.55)"; roundRect(-3,-11,3,22,2,true,false);
+        ctx.fillStyle="rgba(0,0,0,.22)"; ctx.fillRect(-5,-2,10,3);
+        ctx.restore();
+      }
+      if(scene==="play" && !sneaker.hasPeg){
+        ctx.fillStyle="#c9772a"; ctx.font="bold 15px Comic Sans MS, Arial"; ctx.textAlign="center";
+        ctx.fillText("out of pegs — back to the basket!", sneaker.x, sneaker.y-150);
+      }
+      if(scene==="play"){
+        if(sneaker.hidden){
+          ctx.fillStyle="#2f9e56"; ctx.font="bold 15px Comic Sans MS, Arial"; ctx.textAlign="center";
+          ctx.fillText("hidden!", sneaker.x, sneaker.y-128);
+        } else if(isWatching() ){
+          ctx.fillStyle = sneaker.moving ? "#e63946" : "#2f9e56";
+          ctx.font="bold 15px Comic Sans MS, Arial"; ctx.textAlign="center";
+          ctx.fillText(sneaker.moving ? "MOVING!" : "frozen…", sneaker.x, sneaker.y-128);
+        }
+        if(inPegRange() && !isWatching() && humanTurn()){
+          const a = 0.6+Math.sin(T*10)*0.4;
+          ctx.globalAlpha=a; ctx.fillStyle="#ffb703";
+          ctx.font="bold "+(TOUCH?19:17)+"px Comic Sans MS, Arial"; ctx.textAlign="center";
+          ctx.fillText(TOUCH ? "TAP — peg him!" : "SPACE — peg him!", sneaker.x, sneaker.y-150);
+          ctx.globalAlpha=1;
+        }
+      }
+    }});
+    FURNITURE.forEach(f=> items.push({y: f.y+f.h-12, d:()=>drawFurniture(f)}));
+    items.push({y: PEGBOX.y-2, d:()=>drawPegBox(T)});
+    items.sort((a,b)=>a.y-b.y).forEach(i=>i.d());
+  }
+
+  drawSnapFx();
+  drawFx();
+  ctx.restore();
+
+  if(flash>0){ ctx.fillStyle="rgba(255,255,220,"+(flash*0.7)+")"; ctx.fillRect(0,0,W,H); }
+
+  if(scene==="title") drawTitle(T);
+  else {
+    drawHUD();
+    if(scene==="intro")    banner(msg, sub, "#ff8b3d");
+    // let the SNAP + squeal play out in full before the popup covers it
+    if(scene==="caught" && sceneT>1.9) banner(msg, sub, "#e63946");
+    if(scene==="roundwin") banner(msg, sub, "#2f9e56");
+    if(scene==="gamewin")  banner(msg, sub, "#2f9e56");
+    if(scene==="over")     banner(msg, sub, "#ffb703");
+    if(scene==="play" && humanTurn()) drawStick();
+    if(!TOUCH){
+      ctx.fillStyle="rgba(90,50,20,.5)"; ctx.font="13px Arial"; ctx.textAlign="right";
+      ctx.fillText((muted?"muted • ":"") + (MUS.on?"":"music off • ") + "P pause • R restart", W-20, H-14);
+    } else if(scene==="play" && humanTurn() && !stick.on){
+      ctx.fillStyle="rgba(90,50,20,.45)"; ctx.font="15px Comic Sans MS, Arial"; ctx.textAlign="center";
+      ctx.fillText("swipe & hold to sneak  •  let go to freeze", W/2, H-16);
+    }
+    if(paused) drawPause();
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
