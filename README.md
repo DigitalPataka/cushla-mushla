@@ -35,8 +35,8 @@ extremely fat grey cat. She is the timer.
   — you keep whatever you'd managed to peg on.
 - There's no countdown and no numbers. The lean *is* the clock.
 - The cat tree is solid like the rest of the furniture, so **you can hide behind it**.
-- Stop and **give her a pat** (same button as pegging) and she'll purr and smile.
-  It does nothing at all except cost you the seconds you spend standing there.
+- There are a few things in the kitchen worth stopping for. They're not listed
+  here, and the game never mentions them either — go and find them.
 
 ### His turn: you're on the dishes
 
@@ -58,7 +58,6 @@ and clatters to the floor. **First to five pegs wins.**
 | **Sneak** | Swipe and hold — drag further to move faster | Arrows or WASD |
 | **Freeze** | Lift your finger | Let go of the keys |
 | **Peg them** | Tap | Space |
-| **Pat Beanbags** | Tap beside the cat tree | Space beside the cat tree |
 | **Look round** (dish duty) | Hold anywhere | Hold Space |
 | **Pause** | ⏸ button, top right | P or Esc |
 | **Restart** | Pause menu | R |

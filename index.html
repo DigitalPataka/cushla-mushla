@@ -176,6 +176,14 @@ const S = {
     [523,659,784,880].forEach((f,i)=> tone(f, 0.34, "sine", 0.10, null, i*0.10));
     tone(1319, 0.5, "triangle", 0.045, 1568, 0.30);
   },
+  tick(){                        // a peg dropping into its slot on the scoreboard
+    tone(1320, 0.07, "triangle", 0.10, 1760);
+    tone(660, 0.05, "square", 0.05);
+  },
+  phew(){                        // froze just in time
+    tone(300, 0.16, "sine", 0.055, 200);
+    tone(210, 0.20, "sine", 0.035, 160, 0.05);
+  },
   disco(){                       // clack, and the place goes off
     tone(96, 0.07, "square", 0.10);
     [523,659,784,1047].forEach((f,i)=> tone(f, 0.22, "sawtooth", 0.045, null, 0.07+i*0.07));
@@ -634,18 +642,35 @@ function startGame(){
   cushla.hasFlower = shonty.hasFlower = false;
   flowerPicked = flowerGiven = false; rainbow = 0; laU = 0;
   discoT = 0; discoStep = 0; discoNext = 0;
+  tally = {crashes:0, guitar:0, discos:0, pats:0};
+  flyers = []; dotPop = {cushla:0, shonty:0}; phewT = 0; stillT = 0; wasLanded = false;
+  tally = {crashes:0, guitar:0, discos:0, pats:0};
+  flyers = []; dotPop = {cushla:0, shonty:0}; phewT = 0;
   sneaker = cushla; washer = shonty;           // Cushla sneaks first
   beginTurn(true);
+}
+/* What you'll actually remember isn't 5–3, it's what happened on the way. */
+function matchRecap(){
+  const n = x => x===1 ? "once" : x===2 ? "twice" : x + " times";
+  const bits = [];
+  if(flowerGiven)   bits.push("you gave him a flower");
+  if(tally.crashes) bits.push("Beanbags brought her tree down " + n(tally.crashes));
+  if(tally.guitar)  bits.push("he stopped to play the guitar " + n(tally.guitar));
+  if(tally.discos)  bits.push("the lights went out " + n(tally.discos));
+  if(tally.pats)    bits.push("Beanbags got " + (tally.pats===1 ? "a pat" : tally.pats + " pats"));
+  if(!bits.length) return "";
+  const last = bits.pop();
+  return " Along the way: " + (bits.length ? bits.join(", ") + " and " + last : last) + ".";
 }
 function gameOver(winner){
   scene = "over"; sceneT = 0; readyWait = false;
   S.win();
   for(let i=0;i<170;i++) confetti.push({x:Math.random()*W,y:-Math.random()*H,vy:60+Math.random()*180,vx:(Math.random()-.5)*60,r:Math.random()*6+3,rot:Math.random()*6,vr:(Math.random()-.5)*8,col:PEG_COLS[i%PEG_COLS.length]});
-  msg = (winner===cushla ? "You win! 🏆" : "Shonty wins! 🧦");
+  msg = (winner===cushla ? "You win!" : "Shonty wins!");
   sub = (winner===cushla
       ? "Five pegs on Shonty and he never felt a thing."
-      : "He got five on you. Rematch?")
-    + (TOUCH ? " Tap to play again." : " Press ENTER to play again.");
+      : "Five on you, and he is unbearably pleased with himself.")
+    + matchRecap();      // the banner already says how to carry on
 }
 // the turn passes: after PER_TURN pegs, or the moment someone's caught
 function passTurn(){
@@ -653,6 +678,34 @@ function passTurn(){
   washer  = (washer ===cushla) ? shonty : cushla;
   beginTurn(false);
 }
+/* Pegs fly up to the scoreboard and drop into their slot, which is a lot more
+   satisfying than a dot silently becoming filled. */
+let flyers = [];
+let dotPop = {cushla:0, shonty:0};      // the slot bounces as one lands
+let phewT = 0;                          // froze JUST in time
+let stillT = 0;                         // how long she's been stood still
+let wasLanded = false;                  // his look had already landed last frame
+// what happened this match, for the round-up at the end
+let tally = {crashes:0, guitar:0, discos:0, pats:0};
+
+/* where peg number i sits on someone's scoreboard — must match drawScore */
+function scoreDot(forCushla, i){
+  let x, y, bwv, dr, gap;
+  if(PORTRAIT){
+    const top = SAFE_TOP + 6*SC, g = 8*SC;
+    bwv = (W - 20*SC - g)/2;
+    x = forCushla ? 10*SC : 10*SC + bwv + g;
+    y = top + 28*SC; dr = 7*SC; gap = 18*SC;
+  } else {
+    const pad = 18;
+    bwv = Math.min(300, (W - pad*2 - 76)/2);
+    x = forCushla ? pad : W - pad - bwv;
+    y = 12; dr = 10; gap = 30;
+  }
+  const x1 = x + bwv - (PORTRAIT ? 10*SC : 12) - dr;
+  return {x: x1 - (TARGET-1-i)*gap, y: y + (PORTRAIT ? 26*SC : 26)};
+}
+
 let floorPegs = [];      // pegs that have pinged off and are lying on the floor
 let fallers = [];        // …while they're still tumbling through the air
 
@@ -928,11 +981,13 @@ function atSwitch(){
   return Math.abs(sneaker.x - SWITCH_X) < 36*SC && sneaker.y < SINK_Y + 54*SC;
 }
 function flickSwitch(){
+  tally.discos++;
   discoT = DISCO_TIME;
   discoStep = 0; discoNext = 0;      // the loop starts from the top each time
   S.disco();
 }
 function patCat(){
+  tally.pats++;
   cat.purr = Math.min(2.6, cat.purr + 1.6);
   cat.patCd = 0.5;
   S.purr();
@@ -947,17 +1002,27 @@ function reload(){
 function placePeg(){
   const pal = PEG_COLS;
   sneaker.hasPeg = false;
+  const col = pal[washer.pegsOn.length % pal.length];
   washer.pegsOn.push({
     ox:(Math.random()-0.5)*36, oy:-84+Math.random()*54,
-    col: pal[washer.pegsOn.length % pal.length],
-    rot:(Math.random()-0.5)*1.3, pop:0
+    col, rot:(Math.random()-0.5)*1.3, pop:0
   });
   S.peg(); S.point();
   for(let i=0;i<22;i++) sparks.push({x:washer.x,y:washer.y-70,vx:(Math.random()-.5)*260,vy:-Math.random()*220-40,life:0.8,col:pal[i%pal.length]});
   for(let i=0;i<4;i++) hearts.push({x:washer.x+(Math.random()-.5)*40,y:washer.y-90,vy:-40,life:1.2});
   flash = 0.35;
   turnPegs++;
+  // send it up to the scoreboard, so the point physically arrives somewhere
+  const mine = (sneaker === cushla);
+  const d = scoreDot(mine, washer.pegsOn.length - 1);
+  flyers.push({x0: washer.x, y0: washer.y-70, x: washer.x, y: washer.y-70,
+               tx: d.x, ty: d.y, t: 0, dur: 0.55, col,
+               who: mine ? "cushla" : "shonty", last: washer.pegsOn.length >= target});
   if(washer.pegsOn.length >= target){
+    // the fifth peg IS the match — it shouldn't land like the first one
+    flash = 0.9; shake = 0.55;
+    for(let i=0;i<46;i++) sparks.push({x:washer.x,y:washer.y-70,
+      vx:(Math.random()-.5)*440, vy:-Math.random()*340-60, life:1.1, col:pal[i%pal.length]});
     gameOver(sneaker);
   } else if(turnPegs >= PER_TURN){
     // two pegs is a turn — hand over
@@ -1053,6 +1118,7 @@ function getCaught(){
    of the peg basket, everyone in the kitchen hears it, and that's the turn —
    whatever you'd managed to peg on by then, you keep.                    */
 function catTimeUp(){
+  tally.crashes++;
   scene = "catfall"; sceneT = 0;
   catFall = {t:0, crashed:false};
   msg = "TIMBER!";
@@ -1180,6 +1246,7 @@ function updatePlay(dt){
   if(!humanTurn() && hide === GUITAR_F && !sneaker.moving){
     if(playing <= 0){                       // just picked it up
       aiRest = Math.max(aiRest, 2.8);       // …so he lingers long enough to play
+      tally.guitar++;
       strumT = 0;
     }
     playing += dt;
@@ -1198,6 +1265,17 @@ function updatePlay(dt){
   if(graceT <= 0 && lookLanded() && sneaker.moving && !hide && !sneaker.hasFlower){
     getCaught(); return;
   }
+  // …and if she stopped only a heartbeat before he looked, let her feel it.
+  // "Nothing happened" is a much duller outcome than "that was close".
+  stillT = sneaker.moving ? 0 : stillT + dt;
+  const landed = lookLanded();
+  if(landed && !wasLanded && humanTurn() && !sneaker.moving && !hide
+     && stillT < 0.45 && graceT <= 0){
+    phewT = 1.5; S.phew();
+    for(let i=0;i<3;i++) sparks.push({x: sneaker.x + 14 + i*4, y: sneaker.y - 116,
+      vx: 40+Math.random()*30, vy: -30-Math.random()*20, life: 0.6, col:"#9fd7f2"});
+  }
+  wasLanded = landed;
 }
 
 /* ---------- Shonty's AI sneak ----------
@@ -1828,6 +1906,23 @@ function drawCat(u, settle){
   ctx.restore();
 }
 
+/* Signs off the end of a match. A rainbow means Shonty, so it belongs here. */
+function drawRainbowIcon(x, y, s){
+  ctx.save();
+  ctx.translate(x, y+7*s); ctx.scale(s, s);
+  // Radii must stay POSITIVE — ctx.arc throws on a negative one, which aborts
+  // the whole frame and takes the game loop down with it.
+  const band = 3.1;
+  ctx.lineWidth = band; ctx.lineCap = "butt";
+  ["#ff5d73","#ff9f45","#ffd93d","#8ce99a","#5ec8ff","#c77dff"].forEach((c,i)=>{
+    const r = 21 - i*band;
+    if(r <= band*0.5) return;
+    ctx.strokeStyle = c;
+    ctx.beginPath(); ctx.arc(0, 0, r, Math.PI, 0); ctx.stroke();
+  });
+  ctx.restore();
+}
+
 /* A little Beanbags for the TIMBER! banner. The 🐈 emoji is a ginger tabby on
    every platform, and she is emphatically grey and white, so she's drawn. */
 function drawBeanbagsIcon(x, y, s){
@@ -2309,14 +2404,14 @@ function drawHUD(){
     const gap = 8*SC, cw = (W - 20*SC - gap)/2, ry = top + 28*SC;
     ctx.fillStyle="rgba(230,57,70,.10)";  roundRect(10*SC, ry, cw, 50*SC, 12*SC, true, false);
     ctx.fillStyle="rgba(47,168,160,.10)"; roundRect(10*SC+cw+gap, ry, cw, 50*SC, 12*SC, true, false);
-    drawScore(10*SC,          ry, cw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla);
-    drawScore(10*SC+cw+gap,   ry, cw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty);
+    drawScore(10*SC,          ry, cw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla, dotPop.cushla);
+    drawScore(10*SC+cw+gap,   ry, cw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty, dotPop.shonty);
   } else {
     const pad = 18, bw = Math.min(300, (W - pad*2 - 76) / 2);
     ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(pad,12,bw,54,16,true,false);
     ctx.fillStyle="rgba(255,255,255,.9)"; roundRect(W-pad-bw,12,bw,54,16,true,false);
-    drawScore(pad,        12, bw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla);
-    drawScore(W-pad-bw,   12, bw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty);
+    drawScore(pad,        12, bw, "Cushla", "#e63946", shonty.pegsOn.length, sneaker===cushla, dotPop.cushla);
+    drawScore(W-pad-bw,   12, bw, "Shonty", "#2fa8a0", cushla.pegsOn.length, sneaker===shonty, dotPop.shonty);
     ctx.textAlign="center"; ctx.textBaseline="top";
     ctx.fillStyle="rgba(255,255,255,.85)";
     roundRect(W/2-110, 12, 220, 26, 13, true, false);
@@ -2333,7 +2428,23 @@ function drawHUD(){
   else { ctx.fillRect(b.x-b.r*0.36,b.y-b.r*0.44,b.r*0.26,b.r*0.88); ctx.fillRect(b.x+b.r*0.10,b.y-b.r*0.44,b.r*0.26,b.r*0.88); }
   ctx.restore();
 }
-function drawScore(x,y,bw,name,col,n,active){
+/* Drawn after the HUD and outside the shake, so a peg lands exactly in its slot */
+function drawFlyers(){
+  for(const f of flyers){
+    const p = Math.min(1, f.t/f.dur);
+    ctx.save();
+    ctx.translate(f.x, f.y);
+    ctx.rotate(p*7 + (f.last?p*5:0));
+    const s = 1 + (1-p)*0.5;
+    ctx.scale(s, s);
+    ctx.fillStyle=f.col; roundRect(-5,-13,10,26,3,true,false);
+    ctx.fillStyle="rgba(255,255,255,.55)"; roundRect(-3,-11,3,22,2,true,false);
+    ctx.fillStyle="rgba(0,0,0,.22)"; ctx.fillRect(-5,-2,10,3);
+    ctx.restore();
+  }
+}
+
+function drawScore(x,y,bw,name,col,n,active,pop){
   ctx.save();
   ctx.textAlign="left"; ctx.textBaseline="middle";
   const px = x + (PORTRAIT ? 10*SC : 12);
@@ -2348,9 +2459,11 @@ function drawScore(x,y,bw,name,col,n,active){
   const x1 = x + bw - (PORTRAIT ? 10*SC : 12) - dr;
   for(let i=0;i<TARGET;i++){
     const cx = x1 - (TARGET-1-i)*gap, cy = y + (PORTRAIT ? 26*SC : 26);
-    ctx.beginPath(); ctx.arc(cx,cy,dr,0,7);
+    // the one that just landed gives a little bounce
+    const r = dr * (i===n-1 ? 1 + (pop||0)*0.65 : 1);
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,7);
     ctx.fillStyle = i<n ? col : "rgba(0,0,0,.12)"; ctx.fill();
-    if(i<n){ ctx.fillStyle="rgba(255,255,255,.65)"; ctx.beginPath(); ctx.arc(cx-dr*0.3,cy-dr*0.3,dr*0.3,0,7); ctx.fill(); }
+    if(i<n){ ctx.fillStyle="rgba(255,255,255,.65)"; ctx.beginPath(); ctx.arc(cx-r*0.3,cy-r*0.3,r*0.3,0,7); ctx.fill(); }
   }
   ctx.restore();
 }
@@ -2426,6 +2539,20 @@ function roundRect(x,y,w,h,r,fill,stroke){
 function updateFx(dt){
   if(laU > 0) laU -= dt;
   if(immT > 0) immT -= dt;
+  if(phewT > 0) phewT -= dt;
+  dotPop.cushla = Math.max(0, dotPop.cushla - dt*3);
+  dotPop.shonty = Math.max(0, dotPop.shonty - dt*3);
+  for(let i=flyers.length-1; i>=0; i--){
+    const f = flyers[i];
+    f.t += dt;
+    const p = Math.min(1, f.t/f.dur), e = p*p*(3-2*p);
+    f.x = f.x0 + (f.tx-f.x0)*e;
+    f.y = f.y0 + (f.ty-f.y0)*e - Math.sin(p*Math.PI)*70*SC;   // lobbed, not dragged
+    if(p >= 1){
+      dotPop[f.who] = 1; S.tick();
+      flyers.splice(i,1);
+    }
+  }
   notes = notes.filter(n => (n.life -= dt) > 0);
   notes.forEach(n => { n.y += n.vy*dt; });
   if(flowerGiven && rainbow < 1) rainbow = Math.min(1, rainbow + dt*0.5);
@@ -3000,7 +3127,12 @@ function frame(now){
           ctx.fillStyle=col; ctx.fillText(txt, sneaker.x, sneaker.y+dy+1);
           ctx.textBaseline="alphabetic";
         };
-        if(sneaker.hidden) label("hidden!", "#2f9e56", -132);
+        if(phewT > 0 && !sneaker.hidden){
+          ctx.globalAlpha = Math.min(1, phewT*1.6);
+          label("phew!", "#2f80ed", -132);
+          ctx.globalAlpha = 1;
+        }
+        else if(sneaker.hidden) label("hidden!", "#2f9e56", -132);
         else if(isWatching()) label(sneaker.moving ? "MOVING!" : "frozen…",
                                     sneaker.moving ? "#e63946" : "#2f9e56", -132);
         const tap = TOUCH ? "TAP — " : "SPACE — ";
@@ -3055,7 +3187,11 @@ function frame(now){
       banner(msg, sub, "#9b7bd4", {w: 48*s, draw:(x,y)=>drawBeanbagsIcon(x,y,s)});
     }
     if(scene==="roundwin") banner(msg, sub, "#2f9e56");
-    if(scene==="over")     banner(msg, sub, "#ffb703");
+    if(scene==="over"){
+      const s = PORTRAIT ? 0.72*TS/1.34 : 1;
+      banner(msg, sub, "#ffb703", {w: 48*s, draw:(x,y)=>drawRainbowIcon(x,y,s)});
+    }
+    drawFlyers();          // above the HUD, so a peg drops into its slot
     drawStatusStrip();
     drawImmunity();
     drawPeekMeter();
