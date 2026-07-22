@@ -105,8 +105,58 @@ addEventListener("orientationchange", ()=>setTimeout(fitStage, 250));
 fitStage();
 
 /* ---------- tiny audio kit ---------- */
-let AC = null, muted = false;
-function ac(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+let AC = null, muted = false, MASTER = null;
+/* One master bus: every voice goes through a single point, mastered for the
+   thing it's actually being played on, with a safety limiter last.
+
+   Measured peak in heavy play is only ~0.31, so nothing was clipping — the
+   limiter sits well above that and stays out of the way.
+
+   Deliberately NOT tuned for a phone's built-in speaker. Rolling off the bass
+   and lifting 2–3kHz is right for a bare handset, but there's no way to tell
+   whether the output is the speaker or Bluetooth headphones, and on AirPods
+   that EQ strips the low end they can actually reproduce and sounds thin and
+   harsh. So the chain stays full-range: a subsonic filter for rumble nothing
+   can play anyway, and a limiter. The parts that help a small speaker are done
+   in the writing instead — see the octave-up bass and the kick's click. */
+function ac(){
+  if(!AC){
+    try{
+      AC = new (window.AudioContext||window.webkitAudioContext)();
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -3; comp.knee.value = 6; comp.ratio.value = 12;
+      comp.attack.value = 0.003; comp.release.value = 0.15;
+      comp.connect(AC.destination);
+      const hp = AC.createBiquadFilter();      // subsonic only — inaudible either way
+      hp.type = "highpass"; hp.frequency.value = 35; hp.Q.value = 0.7;
+      hp.connect(comp);
+      MASTER = AC.createGain(); MASTER.gain.value = 1;
+      MASTER.connect(hp);
+    }catch(e){ AC = null; }
+  }
+  return AC;
+}
+const out = () => MASTER || (AC && AC.destination);
+
+/* Noise buffers were allocated and filled sample-by-sample on EVERY call —
+   the disco hats alone fire about ten a second. A few are baked per length
+   and reused, picked at random so repeated hits still don't sound identical. */
+const noiseBufs = new Map();
+function noiseBuf(a, dur){
+  const key = Math.round(dur*100);
+  let set = noiseBufs.get(key);
+  if(!set){
+    set = [];
+    const n = Math.max(1, Math.floor(a.sampleRate*dur));
+    for(let v=0; v<3; v++){
+      const b = a.createBuffer(1, n, a.sampleRate), d = b.getChannelData(0);
+      for(let i=0;i<n;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/n, 2.2);
+      set.push(b);
+    }
+    noiseBufs.set(key, set);
+  }
+  return set[(Math.random()*set.length)|0];
+}
 function tone(freq, dur, type, vol, slideTo, delay){
   const a = ac(); if(!a || muted) return;
   const t0 = a.currentTime + (delay||0);
@@ -116,20 +166,21 @@ function tone(freq, dur, type, vol, slideTo, delay){
   g.gain.setValueAtTime(0.0001, t0);
   g.gain.exponentialRampToValueAtTime(vol||0.2, t0+0.012);
   g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
-  o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0+dur+0.05);
+  o.connect(g); g.connect(out()); o.start(t0); o.stop(t0+dur+0.05);
+  // let go of the nodes as soon as they've finished, rather than leaving a
+  // long tail of dead voices hanging off the graph
+  o.onended = () => { try{ o.disconnect(); g.disconnect(); }catch(e){} };
 }
 function noise(dur, vol, freq, q, delay){
   const a = ac(); if(!a || muted) return;
   const t0 = a.currentTime + (delay||0);
-  const n = Math.floor(a.sampleRate*dur);
-  const buf = a.createBuffer(1,n,a.sampleRate), d = buf.getChannelData(0);
-  for(let i=0;i<n;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/n,2.2);
-  const src = a.createBufferSource(); src.buffer = buf;
+  const src = a.createBufferSource(); src.buffer = noiseBuf(a, dur);
   const bp = a.createBiquadFilter(); bp.type="bandpass"; bp.frequency.setValueAtTime(freq||1400,t0);
   bp.frequency.exponentialRampToValueAtTime((freq||1400)*0.35, t0+dur);
   bp.Q.value = q||3;
   const g = a.createGain(); g.gain.value = vol||0.3;
-  src.connect(bp); bp.connect(g); g.connect(a.destination); src.start(t0);
+  src.connect(bp); bp.connect(g); g.connect(out()); src.start(t0);
+  src.onended = () => { try{ src.disconnect(); bp.disconnect(); g.disconnect(); }catch(e){} };
 }
 const S = {
   peg(){ tone(660,0.09,"square",0.14); tone(1320,0.12,"triangle",0.12,1760,0.05); },
@@ -217,7 +268,8 @@ function at(freq, dur, type, vol, when, slideTo){
   g.gain.setValueAtTime(0.0001, when);
   g.gain.exponentialRampToValueAtTime(vol, when+0.02);
   g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
-  o.connect(g); g.connect(a.destination); o.start(when); o.stop(when+dur+0.05);
+  o.connect(g); g.connect(out()); o.start(when); o.stop(when+dur+0.05);
+  o.onended = () => { try{ o.disconnect(); g.disconnect(); }catch(e){} };
 }
 /* ---------- five seconds of deep house, for the disco ----------
    Four on the floor, an offbeat bass, offbeat hats and a trance arpeggio over
@@ -234,7 +286,13 @@ function dkick(when){
   g.gain.setValueAtTime(0.0001, when);
   g.gain.exponentialRampToValueAtTime(0.24, when+0.006);
   g.gain.exponentialRampToValueAtTime(0.0001, when+0.22);
-  o.connect(g); g.connect(a.destination); o.start(when); o.stop(when+0.26);
+  o.connect(g); g.connect(out()); o.start(when); o.stop(when+0.26);
+  o.onended = () => { try{ o.disconnect(); g.disconnect(); }catch(e){} };
+  // A phone speaker can reproduce none of the above, so the beat also gets a
+  // mid-range body and a click — that's the part that actually lands on a
+  // handset, and it's what stops the four-to-the-floor vanishing entirely.
+  at(300, 0.075, "triangle", 0.085, when, 140);
+  noise(0.012, 0.045, 2300, 1.0, Math.max(0, when - a.currentTime));
 }
 function discoTick(){
   const a = ac();
@@ -247,7 +305,10 @@ function discoTick(){
     const root = [9, 5, 0, 7][Math.floor(s/16) % 4];      // Am  F  C  G
     if(s % 4 === 0) dkick(t);                             // four on the floor
     if(s % 4 === 2) noise(0.05, 0.040, 9000, 0.9, Math.max(0, t-now));
-    if(s % 2 === 1) at(nf(root-24), 0.15, "sawtooth", 0.055, t);   // offbeat bass
+    if(s % 2 === 1){                                     // offbeat bass…
+      at(nf(root-24), 0.15, "sawtooth", 0.055, t);
+      at(nf(root-12), 0.14, "sawtooth", 0.034, t);       // …and an octave up, so a
+    }                                                    // phone still hears the line
     at(nf(root + ARP2[s % 8] + 12), 0.12, "sawtooth", 0.026, t);   // arpeggio
     if(s % 16 === 0) at(nf(root + 12), 1.0, "triangle", 0.026, t); // pad
     discoNext += DSPB; discoStep++;
