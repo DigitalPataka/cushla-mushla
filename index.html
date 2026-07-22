@@ -176,6 +176,11 @@ const S = {
     [523,659,784,880].forEach((f,i)=> tone(f, 0.34, "sine", 0.10, null, i*0.10));
     tone(1319, 0.5, "triangle", 0.045, 1568, 0.30);
   },
+  disco(){                       // clack, and the place goes off
+    tone(96, 0.07, "square", 0.10);
+    [523,659,784,1047].forEach((f,i)=> tone(f, 0.22, "sawtooth", 0.045, null, 0.07+i*0.07));
+    tone(65, 0.5, "sine", 0.09, 49, 0.10);
+  },
   crash(){                       // timber! — and a very put-out cat
     noise(0.55, 0.55, 760, 1.2);
     tone(120, 0.50, "sawtooth", 0.20, 46);
@@ -206,9 +211,45 @@ function at(freq, dur, type, vol, when, slideTo){
   g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
   o.connect(g); g.connect(a.destination); o.start(when); o.stop(when+dur+0.05);
 }
+/* ---------- five seconds of deep house, for the disco ----------
+   Four on the floor, an offbeat bass, offbeat hats and a trance arpeggio over
+   Am – F – C – G. Scheduled on the audio clock like the music box, so it
+   doesn't drift with the frame rate. Plays whether or not the music is on. */
+const DBPM = 128, DSPB = 60/DBPM/4;          // one sixteenth
+let discoNext = 0, discoStep = 0;
+function dkick(when){
+  const a = ac(); if(!a || muted) return;
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(125, when);
+  o.frequency.exponentialRampToValueAtTime(44, when+0.11);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(0.24, when+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+0.22);
+  o.connect(g); g.connect(a.destination); o.start(when); o.stop(when+0.26);
+}
+function discoTick(){
+  const a = ac();
+  if(!a || a.state!=="running" || muted || discoT <= 0){ discoNext = 0; return; }
+  const now = a.currentTime;
+  if(discoNext < now) discoNext = now + 0.05;
+  const ARP2 = [0,4,7,12,7,4,7,12];
+  while(discoNext < now + 0.30){
+    const s = discoStep, t = discoNext;
+    const root = [9, 5, 0, 7][Math.floor(s/16) % 4];      // Am  F  C  G
+    if(s % 4 === 0) dkick(t);                             // four on the floor
+    if(s % 4 === 2) noise(0.05, 0.040, 9000, 0.9, Math.max(0, t-now));
+    if(s % 2 === 1) at(nf(root-24), 0.15, "sawtooth", 0.055, t);   // offbeat bass
+    at(nf(root + ARP2[s % 8] + 12), 0.12, "sawtooth", 0.026, t);   // arpeggio
+    if(s % 16 === 0) at(nf(root + 12), 1.0, "triangle", 0.026, t); // pad
+    discoNext += DSPB; discoStep++;
+  }
+}
+
 function musicTick(){
   const a = ac();
-  if(!a || a.state!=="running" || muted || !MUS.on){ MUS.next = 0; return; }
+  // the music box gets out of the way while the disco is on
+  if(!a || a.state!=="running" || muted || !MUS.on || discoT > 0){ MUS.next = 0; return; }
   const now = a.currentTime, SPB = 0.1875;          // ~160bpm eighth notes
   if(MUS.next < now) MUS.next = now + 0.06;
   while(MUS.next < now + 0.35){
@@ -341,6 +382,16 @@ const START     = {x: W*0.63, y: H - 46*SC};       // sneaker spawn, far end of 
 const PEGBOX    = {x: W*0.26, y: H - 34*SC};       // reload here after every peg
 const PEG_COLS  = ["#ff5d73","#ffd93d","#5ec8ff","#8ce99a","#c77dff","#ff9f45","#4dd4ac"];
 
+/* ---------- the light switch ----------
+   On the wall by the bench, over at the right-hand end where nobody has any
+   reason to go. Stand in front of it and flick it and the kitchen lights go
+   out, a disco ball comes down and the place goes off for five seconds.
+   No prompt — it's there to be found. Flick it as often as you like.     */
+const SWITCH_X  = W - 38*SC;
+const SWITCH_Y  = (FLOOR_TOP - 58) - 34*SC;     // on the wall above the counter
+const DISCO_TIME = 5;
+let discoT = 0;         // seconds of disco left to run
+
 // Furniture is placed as a fraction of the room, so it lays out correctly on
 // any screen shape: fx across, fy down the floor.
 function furn(fx, fy, w, h, kind){
@@ -358,12 +409,12 @@ const FURNITURE = PORTRAIT ? [
   // Up here she has to cross the room for it, past him, like everything else.
   furn(0.20, 0.37,  92, 52, "flowers"),
   furn(0.79, 0.66,  96, 66, "basket"),
-  // The chair took the wide table's place at the front: it's much narrower, so
-  // it clears both the cat tree and the spawn point. A piece here must clear
-  // BOTH — the table sat over START on short screens (Safari with its address
-  // bar showing), which wedged the sneaker solid and froze the game. These
-  // numbers are checked against every phone shape; re-check before moving it.
-  furn(0.44, 0.83,  88, 54, "chair")
+  // Out in the middle of the floor, which was a big empty dance floor on a
+  // phone. It used to sit at the front, but a piece down there has to clear
+  // BOTH the cat tree and the spawn — a wide table there sat over START on
+  // short screens (Safari with its address bar showing), which wedged the
+  // sneaker solid and froze the game. Checked against every phone shape.
+  furn(0.48, 0.56,  88, 54, "chair")
 ] : [
   {x:300, y:300, w:280, h:60, kind:"table"},
   // up from its old y:392 — the bottom-left corner is the cat's now
@@ -582,6 +633,7 @@ function startGame(){
   floorPegs = [];
   cushla.hasFlower = shonty.hasFlower = false;
   flowerPicked = flowerGiven = false; rainbow = 0; laU = 0;
+  discoT = 0; discoStep = 0; discoNext = 0;
   sneaker = cushla; washer = shonty;           // Cushla sneaks first
   beginTurn(true);
 }
@@ -871,6 +923,15 @@ function updateHug(dt){
     }
   }
 }
+/* stood at the right-hand end of the bench, within reach of the switch */
+function atSwitch(){
+  return Math.abs(sneaker.x - SWITCH_X) < 36*SC && sneaker.y < SINK_Y + 54*SC;
+}
+function flickSwitch(){
+  discoT = DISCO_TIME;
+  discoStep = 0; discoNext = 0;      // the loop starts from the top each time
+  S.disco();
+}
 function patCat(){
   cat.purr = Math.min(2.6, cat.purr + 1.6);
   cat.patCd = 0.5;
@@ -1087,6 +1148,7 @@ function updatePlay(dt){
     else if(act && inPegRange() && !isWatching()){ used(); placePeg(); return; }
     else if(act && atFlowers() && !flowerPicked && sneaker===cushla){ used(); pickFlower(); }
     else if(act && atCat() && cat.patCd<=0){ used(); patCat(); }
+    else if(act && atSwitch()){ used(); flickSwitch(); }
   } else {
     const ai = aiMove(dt); mx = ai.x; my = ai.y;
     if(ai.peg){ placePeg(); return; }
@@ -1377,6 +1439,14 @@ function drawRoom(t){
       ctx.beginPath(); ctx.moveTo(x-14,y); ctx.lineTo(x+14,y); ctx.lineTo(x,y+24); ctx.closePath(); ctx.fill();
     }
   }
+  // the light switch, on the wall down the quiet end of the bench
+  ctx.fillStyle="rgba(0,0,0,.10)";
+  roundRect(SWITCH_X-10, SWITCH_Y-11, 22, 30, 5, true, false);
+  ctx.fillStyle="#f6f1e8"; roundRect(SWITCH_X-11, SWITCH_Y-13, 22, 30, 5, true, false);
+  ctx.fillStyle="#e2dacd"; roundRect(SWITCH_X-8, SWITCH_Y-10, 16, 24, 3, true, false);
+  ctx.fillStyle = discoT>0 ? "#b9ae9c" : "#fffdf9";      // the rocker, up or down
+  roundRect(SWITCH_X-5.5, SWITCH_Y + (discoT>0 ? 1 : -8), 11, 11, 2, true, false);
+
   // counter + sink
   const sx = washerSinkX();
   ctx.fillStyle="#f3d9b8"; ctx.fillRect(0,cTop,W,58);
@@ -1465,6 +1535,27 @@ function drawRoom(t){
     ctx.fillRect(c*70, FLOOR_TOP + r*50, 70, 50);
   }
   ctx.fillStyle="rgba(255,255,255,.18)"; ctx.fillRect(0,FLOOR_TOP,W,H-FLOOR_TOP);
+
+  // Cupboards under the bench. The worktop used to just stop, with the floor
+  // running straight up to meet it, so the whole bench looked like it was
+  // floating. This band is above the walk line, so nobody stands on it.
+  const cupH = 48*SC, cupY = FLOOR_TOP;
+  ctx.fillStyle = "#cfa878"; ctx.fillRect(0, cupY, W, cupH);          // carcass
+  ctx.fillStyle = "rgba(90,56,22,.30)"; ctx.fillRect(0, cupY, W, 4*SC); // worktop lip
+  const doors = Math.max(3, Math.round(W/(104*SC))), dw = W/doors;
+  for(let i=0;i<doors;i++){
+    const x = i*dw;
+    ctx.fillStyle = "#e5c193";                                        // door
+    roundRect(x+4*SC, cupY+8*SC, dw-8*SC, cupH-16*SC, 4*SC, true, false);
+    ctx.fillStyle = "#f0d3ac";                                        // sunken panel
+    roundRect(x+11*SC, cupY+14*SC, dw-22*SC, cupH-28*SC, 3*SC, true, false);
+    ctx.strokeStyle = "rgba(120,80,40,.30)"; ctx.lineWidth = 1.4;
+    roundRect(x+11*SC, cupY+14*SC, dw-22*SC, cupH-28*SC, 3*SC, false, true);
+    ctx.fillStyle = "#8a6a44";                                        // handle
+    roundRect(x+dw-19*SC, cupY+19*SC, 10*SC, 3.4*SC, 1.7*SC, true, false);
+  }
+  ctx.fillStyle = "rgba(90,56,22,.30)";                               // kick plinth
+  ctx.fillRect(0, cupY+cupH-5*SC, W, 5*SC);
 
   if(FANCY){
     // grout lines give the tiles some bite
@@ -2369,6 +2460,50 @@ function drawApronFall(){
   ctx.fillStyle="rgba(255,143,163,.35)"; roundRect(-10,16,20,12,4,true,false);
   ctx.restore();
 }
+/* Lights out, ball down, and the room going off for five seconds. Drawn over
+   the whole scene, so everyone in the kitchen dims together. */
+function drawDisco(){
+  if(discoT <= 0) return;
+  // ramp up fast, drop back gently at the end
+  const a = Math.min(1, (DISCO_TIME-discoT)/0.35, discoT/0.7);
+  const bx = W/2, by = (FLOOR_TOP-58)*0.30 + 26*SC*a;
+  ctx.save();
+  ctx.fillStyle = "rgba(8,5,24," + (0.60*a) + ")";        // the lights go out
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.globalCompositeOperation = "lighter";               // beams sweeping round
+  const cols = ["#ff3d7f","#3ddcff","#ffe23d","#7dff5c","#c77dff","#ff9f45"];
+  const len = Math.max(W, H)*1.25;
+  for(let i=0;i<8;i++){
+    const ang = T*0.85 + i*Math.PI/4;
+    ctx.globalAlpha = 0.13*a;
+    ctx.fillStyle = cols[i % cols.length];
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx+Math.cos(ang)*len,      by+Math.sin(ang)*len);
+    ctx.lineTo(bx+Math.cos(ang+0.17)*len, by+Math.sin(ang+0.17)*len);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+
+  const r = 21*SC;
+  ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 2;   // its cable
+  ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, by-r); ctx.stroke();
+  ctx.save();                                                    // mirrored facets
+  ctx.beginPath(); ctx.arc(bx, by, r, 0, 7); ctx.clip();
+  const tile = r/3.1;
+  for(let gx=-4; gx<=4; gx++) for(let gy=-4; gy<=4; gy++){
+    const s = 0.4 + 0.6*Math.abs(Math.sin(T*2.4 + gx*0.9 + gy*0.55));
+    ctx.fillStyle = "rgb(" + (150+95*s|0) + "," + (175+75*s|0) + "," + (215+40*s|0) + ")";
+    ctx.fillRect(bx+gx*tile-tile*0.45, by+gy*tile-tile*0.45, tile*0.9, tile*0.9);
+  }
+  ctx.restore();
+  ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(bx, by, r, 0, 7); ctx.stroke();
+  ctx.restore();
+}
+
 function drawFx(){
   drawApronFall();
   floorPegs.forEach(p=>{
@@ -2749,8 +2884,9 @@ function drawTitle(t){
 let last = performance.now(), T = 0;
 function frame(now){
   let dt = Math.min(0.05, (now-last)/1000); last = now;
-  musicTick();
+  musicTick(); discoTick();
   if(paused) dt = 0; else T += dt;
+  if(discoT > 0) discoT = Math.max(0, discoT - dt);
   sceneT += dt;
 
   if(paused){ /* everything frozen — just keep rendering */ }
@@ -2880,6 +3016,7 @@ function frame(now){
   drawSnapFx();
   drawFx();
   drawDust();
+  drawDisco();
   ctx.restore();
   drawGrade();
 
