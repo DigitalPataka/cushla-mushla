@@ -645,6 +645,7 @@ function resetPositions(){
   aiPatience = 0; aiPatienceMax = 1.6 + Math.random()*1.3;
   actHeld = false; hug = null;
   playing = 0; strumT = 0; notes = [];
+  guitarPlan = Math.random() < 0.8; guitarGoing = false; guitarT = 0;
   graceT = 0.7;                       // brief no-catch grace as a turn opens
   turnT = 0;
   // a fresh minute, and the cat sits up straight again
@@ -1144,6 +1145,12 @@ function updatePlay(dt){
 let aiBurst = 0;        // >0: currently dashing
 let aiRest  = 0;        // >0: currently holding still
 let aiCover = null;     // the pocket he's making for
+// He can't walk past a guitar. Left to himself he never would go near it —
+// he only ever picks the NEAREST pocket that's on his way to the sink — so
+// once a turn he makes a deliberate detour to it instead.
+let guitarPlan = false; // means to stop off at the guitar this turn
+let guitarGoing = false;// on his way there now
+let guitarT = 0;        // …and how long he's been trying, in case he can't
 let aiWatchT = 0;       // how long you've been looking at him
 let aiWind = 0;         // winding up to clip a peg on
 let aiSinceWatch = 0;   // how long since you last looked — he breaks cover then
@@ -1219,15 +1226,33 @@ function aiMove(dt){
     if(aiSinceWatch < 0.28 && Math.random() < 0.7){ return {x:0,y:0,peg:false}; }
     // pick the next hop: a hiding pocket on the way, or straight on
     const cover = nearestCover();
-    aiCover = (cover && cover.d < 190*SC && !hide && Math.random() < 0.62) ? cover : null;
+    if(GUITAR_F && (guitarGoing || guitarPlan) && !playing){
+      guitarPlan = false; guitarGoing = true;      // stick with it across bursts
+      const h = GUITAR_F.hide;
+      aiCover = {x: h.x + h.w/2, y: h.y + h.h/2, d: 0};
+    } else {
+      aiCover = (cover && cover.d < 190*SC && !hide && Math.random() < 0.62) ? cover : null;
+    }
     aiBurst = 0.75 + Math.random()*0.95;
   }
   aiBurst -= dt;
-  const tgt = aiCover || goal;
+  let tgt = aiCover || goal;
+  // The guitar overrides where he's headed, not just which cover he picks:
+  // ending a rest clears aiCover and starts a fresh burst WITHOUT re-picking,
+  // so as a mere cover choice he'd abandon it and march at the sink instead.
+  if(guitarGoing && GUITAR_F){
+    const h = GUITAR_F.hide;
+    tgt = {x: h.x + h.w/2, y: h.y + h.h/2};
+    guitarT += dt;
+    if(guitarT > 9){ guitarGoing = false; guitarT = 0; }   // can't get there — give up
+  }
   const d = navTo(sneaker.x, sneaker.y, tgt.x, tgt.y);
-  // reached the pocket he was making for? settle in and wait
-  if(aiCover && Math.hypot(aiCover.x-sneaker.x, aiCover.y-sneaker.y) < 26*SC){
-    aiCover = null; aiBurst = 0; aiRest = 0.45 + Math.random()*0.9;
+  // reached what he was making for? settle in and wait
+  const reached = Math.hypot(tgt.x-sneaker.x, tgt.y-sneaker.y) < 26*SC;
+  if(reached && (aiCover || guitarGoing)){
+    aiCover = null; aiBurst = 0;
+    aiRest = guitarGoing ? 0.7 : 0.45 + Math.random()*0.9;
+    guitarGoing = false; guitarT = 0;        // arrived — and now he plays
     return {x:0,y:0,peg:false};
   }
   if(aiBurst <= 0){ aiRest = 0.35 + Math.random()*0.7; }
@@ -2039,8 +2064,9 @@ function drawPerson(p, opts){
     }
     // brows
     ctx.strokeStyle = isC ? "#e0ac33" : "#1b0f09"; ctx.lineWidth=2.6; ctx.lineCap="round";
-    ctx.beginPath(); ctx.moveTo(-12,hy-11); ctx.lineTo(-3,hy-12.5);
-    ctx.moveTo(3,hy-12.5); ctx.lineTo(12,hy-11); ctx.stroke();
+    // pulled in at the outer ends, to leave bare skin between brow and hair
+    ctx.beginPath(); ctx.moveTo(-9.5,hy-11); ctx.lineTo(-2.5,hy-12.5);
+    ctx.moveTo(2.5,hy-12.5); ctx.lineTo(9.5,hy-11); ctx.stroke();
     // blush
     ctx.fillStyle="rgba(255,120,120,.35)";
     ctx.beginPath(); ctx.ellipse(-14,hy+7,5,3.4,0,0,7); ctx.ellipse(14,hy+7,5,3.4,0,0,7); ctx.fill();
@@ -2103,12 +2129,16 @@ function drawPerson(p, opts){
     ctx.beginPath(); ctx.ellipse(16,hy-17,7,5,0.5,0,7); ctx.ellipse(25,hy-14,7,5,-0.4,0,7); ctx.fill();
     ctx.fillStyle="#ffd1e0"; ctx.beginPath(); ctx.arc(20.5,hy-15.5,2.6,0,7); ctx.fill();
   } else {
-    // Short back and sides, hairline arcing UP across the middle so there's a
-    // proper forehead. (A flat fringe straight across here read as a bowl cut.)
-    ctx.beginPath(); ctx.ellipse(0,hy-17,19.5,8,0,Math.PI,0); ctx.fill();
-    // it comes down lower at the temples, which is what makes it a hairline
-    ctx.beginPath(); ctx.ellipse(-17,hy-12,5.5,7,0.22,0,7); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 17,hy-12,5.5,7,-0.22,0,7); ctx.fill();
+    // ONE piece, not a cap plus two blobs: over the top of the skull, then back
+    // along a hairline that sits low at the temples and rises across the
+    // forehead. Separate tufts at the sides read as scrolls stuck on his head,
+    // and a plain half-ellipse gives a dead-flat fringe, i.e. a bowl cut.
+    ctx.beginPath();
+    ctx.moveTo(-20.5, hy-8);
+    ctx.bezierCurveTo(-23, hy-26, 23, hy-26, 20.5, hy-8);   // over the skull
+    ctx.quadraticCurveTo( 12, hy-16.5,  0, hy-17);          // hairline, right half
+    ctx.quadraticCurveTo(-12, hy-16.5, -20.5, hy-8);        // …and the left
+    ctx.closePath(); ctx.fill();
     if(!front){ ctx.beginPath(); ctx.ellipse(0,hy-4,22,19,0,0,7); ctx.fill(); }
   }
   ctx.restore(); // squish
