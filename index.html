@@ -163,6 +163,13 @@ const S = {
     for(let i=0;i<8;i++) tone(66 + (i%2)*9, 0.10, "sawtooth", 0.05, null, i*0.072);
     tone(500, 0.20, "sine", 0.045, 640, 0.10);
   },
+  flower(){                      // a little glitter as she lifts it from the vase
+    [784,988,1175].forEach((f,i)=> tone(f, 0.16, "sine", 0.075, f*1.2, i*0.06));
+  },
+  love(){                        // "la u" — a soft, warm little phrase
+    [523,659,784,880].forEach((f,i)=> tone(f, 0.34, "sine", 0.10, null, i*0.10));
+    tone(1319, 0.5, "triangle", 0.045, 1568, 0.30);
+  },
   crash(){                       // timber! — and a very put-out cat
     noise(0.55, 0.55, 760, 1.2);
     tone(120, 0.50, "sawtooth", 0.20, 46);
@@ -494,6 +501,7 @@ function makeChar(who){
     turnT: 0,
     pegsOn: [],         // pegs stuck to THIS character
     hasPeg: true,       // carrying a peg? if not, sneak back to the basket
+    hasFlower: false,   // …or a flower, which is instead of a peg, never as well
     squeal: 0, hop: 0,
     dir: 1
   };
@@ -533,6 +541,19 @@ let turnClock = TURN_TIME;   // seconds left before the cat tree goes over
 let catFall = null;    // the topple, while it's happening
 let readyWait = false;
 
+/* ---------- the flower ----------
+   Once a game, Cushla can lift a flower from the vase. Carrying it she can't
+   be caught — she can walk straight up to Shonty while he's looking and give
+   it to him. That's the whole of its power: handing it over ends the immunity
+   and leaves her empty-handed, so she still has to trail back to the basket
+   for a peg. Which she will, because she's going to peg him anyway.        */
+let actHeld = false;         // action button already spent on this press
+let hug = null;              // his thank-you: he turns round and squeezes her
+let flowerPicked = false;    // lifted from the vase (which is then a bloom short)
+let flowerGiven  = false;    // handed over — the rainbow is out for the match
+let rainbow = 0;             // 0..1, fades in and stays
+let laU = 0;                 // "La u" bubble timer
+
 // the player IS Cushla: sneaking on her turn, on dish duty on his
 const humanTurn  = () => sneaker === cushla;   // player is the one sneaking
 const humanWatch = () => washer  === cushla;   // player is on the dishes
@@ -541,6 +562,8 @@ const humanWatch = () => washer  === cushla;   // player is on the dishes
 function startGame(){
   cushla.pegsOn = []; shonty.pegsOn = [];
   floorPegs = [];
+  cushla.hasFlower = shonty.hasFlower = false;
+  flowerPicked = flowerGiven = false; rainbow = 0; laU = 0;
   sneaker = cushla; washer = shonty;           // Cushla sneaks first
   beginTurn(true);
 }
@@ -589,7 +612,7 @@ function beginTurn(first){
 function resetPositions(){
   const sp = freeSpot(START.x, START.y);
   sneaker.x = sp.x; sneaker.y = sp.y; sneaker.facing = 0; sneaker.turnT = 0;
-  sneaker.hasPeg = true;
+  sneaker.hasPeg = true;      // she's two-handed: a peg in one, maybe a flower in the other
   catchAnim = null; apronFall = null;
   cushla.apronOff = false; shonty.apronOff = false;
   washer.x = W/2; washer.y = SINK_Y; washer.facing = 0; washer.turnT = 0;
@@ -602,6 +625,7 @@ function resetPositions(){
   // the look when he appears he waits it out instead of walking into it.
   aiBurst = 0; aiRest = 0; aiCover = null; aiWatchT = 9; aiWind = 0;
   aiPatience = 0; aiPatienceMax = 1.6 + Math.random()*1.3;
+  actHeld = false; hug = null;
   graceT = 0.7;                       // brief no-catch grace as a turn opens
   turnT = 0;
   // a fresh minute, and the cat sits up straight again
@@ -748,17 +772,74 @@ const CATCH_MIN = 0.17;
 const lookLanded = () => LOOK.mode==="look" && LOOK.seen > CATCH_MIN;
 
 /* ---------- gameplay ---------- */
-function inPegRange(){
-  if(!sneaker.hasPeg) return false;
+// close enough behind them to reach — for a peg, or for a flower
+function nearWasher(){
   const dx = sneaker.x - washer.x, dy = sneaker.y - washer.y;
   return Math.hypot(dx, dy*1.4) < 82 && sneaker.y > washer.y - 8;
 }
+function inPegRange(){ return sneaker.hasPeg && nearWasher(); }
 function atPegBox(){
   return Math.hypot(sneaker.x - PEGBOX.x, (sneaker.y - PEGBOX.y)*1.3) < 76;
 }
 /* close enough to reach up and give her a scratch */
 function atCat(){
   return Math.hypot(sneaker.x - CATTREE.x, (sneaker.y - CATTREE.y - 16*SC)*1.2) < 84*SC;
+}
+/* within reach of the vase on the little side table */
+const FLOWER_TABLE = FURNITURE.find(f => f.kind === "flowers");
+function atFlowers(){
+  if(!FLOWER_TABLE) return false;
+  const cx = FLOWER_TABLE.x + FLOWER_TABLE.w/2, cy = FLOWER_TABLE.y + FLOWER_TABLE.h/2;
+  return Math.hypot(sneaker.x - cx, (sneaker.y - cy)*1.2) < 84*SC;
+}
+function pickFlower(){
+  flowerPicked = true;
+  sneaker.hasFlower = true;          // she keeps her peg too — two hands
+  S.flower();
+  for(let i=0;i<14;i++) sparks.push({
+    x: FLOWER_TABLE.x + FLOWER_TABLE.w/2 + (Math.random()-.5)*40,
+    y: FLOWER_TABLE.y - 30*SC, vx:(Math.random()-.5)*90, vy:-Math.random()*90-20,
+    life:0.8, col:["#ff8fab","#ffd93d","#c77dff"][i%3]});
+}
+function giveFlower(){
+  sneaker.hasFlower = false;         // and with it goes the immunity
+  flowerGiven = true;
+  laU = 2.8;
+  S.love();
+  for(let i=0;i<10;i++) hearts.push({
+    x: (sneaker.x + washer.x)/2 + (Math.random()-.5)*54,
+    y: washer.y - 80 - Math.random()*30, vy:-30-Math.random()*26, life:1.5});
+  hug = {t:0};                       // he turns round and gives her a squeeze
+}
+/* The hug. He steps in, holds on a moment, then goes back to the dishes — which
+   is of course the moment she's been waiting for. Costs her a few seconds of
+   her minute, which is the only thing it costs. */
+function updateHug(dt){
+  hug.t += dt;
+  washer.facing = 1; washer.turnT = 1;
+  sneaker.facing = 1; sneaker.moving = false;
+  const side = washer.x > sneaker.x ? 1 : -1;
+  if(hug.t < 0.75){                                   // steps in
+    const tx = sneaker.x + 30*SC*side;
+    washer.x += (tx - washer.x) * Math.min(1, dt*7);
+    washer.y += (sneaker.y - washer.y) * Math.min(1, dt*7);
+    washer.moving = true; washer.walk += dt*10;
+  } else if(hug.t < 2.0){                             // holds on
+    washer.moving = false; washer.walk += dt*1.2;
+    if(Math.random() < 0.14) hearts.push({
+      x:(washer.x+sneaker.x)/2 + (Math.random()-.5)*46,
+      y: washer.y - 104, vy:-28, life:1.3});
+  } else {                                            // and back to the sink
+    washer.x += (washerSinkX() - washer.x) * Math.min(1, dt*6);
+    washer.y += (SINK_Y - washer.y) * Math.min(1, dt*6);
+    washer.moving = true; washer.walk += dt*9;
+    if(Math.hypot(washer.x-washerSinkX(), washer.y-SINK_Y) < 3){
+      washer.x = washerSinkX(); washer.y = SINK_Y;
+      washer.moving = false; washer.facing = 0; washer.turnT = 0;
+      LOOK.mode="wash"; LOOK.t=0; LOOK.dur=2.4*pace(); LOOK.warn=false; LOOK._pinged=false;
+      hug = null; graceT = 0.6;
+    }
+  }
 }
 function patCat(){
   cat.purr = Math.min(2.6, cat.purr + 1.6);
@@ -933,7 +1014,7 @@ function updateCat(dt){
 function updatePlay(dt){
   // when it's YOUR turn on the dishes, hold to spin round
   if(humanWatch()) peekHeld = down(" ") || stick.on;
-  updateLook(dt);
+  if(!hug) updateLook(dt);        // he's not watching for sneaks, he's hugging
 
   // ----- the cat clock -----
   // A minute a turn, in both directions: it's the whole reason a game has a
@@ -949,6 +1030,9 @@ function updatePlay(dt){
   }
   if(turnClock <= 0){ catTimeUp(); return; }
 
+  // the hug plays out on its own — no creeping, no pegging, no catching
+  if(hug){ updateHug(dt); return; }
+
   // ----- movement -----
   const SPD = PORTRAIT ? 250 : 168;      // longer room, longer stride
   let mx=0, my=0, throttle=1;
@@ -960,8 +1044,19 @@ function updatePlay(dt){
     if(!mx && !my && stick.mag > 0){     // swipe / drag steering
       mx = stick.dx; my = stick.dy; throttle = 0.34 + stick.mag*0.66;
     }
-    if((down(" ") || tapPeg>0) && inPegRange() && !isWatching()){ tapPeg = 0; placePeg(); return; }
-    if((down(" ") || tapPeg>0) && atCat() && cat.patCd<=0){ tapPeg = 0; patCat(); }
+    // ONE action per press. Held down, this used to fire twice in consecutive
+    // frames — handing over the flower and then instantly pegging him with the
+    // same jab of the button, which is the free peg the flower isn't meant to be.
+    const rawAct = down(" ") || tapPeg>0;
+    if(!rawAct) actHeld = false;
+    const act = rawAct && !actHeld;
+    const used = () => { actHeld = true; tapPeg = 0; };
+    // giving the flower comes first — it's the one thing she can do while he
+    // IS looking, which is the whole point of carrying it
+    if(act && sneaker.hasFlower && nearWasher()){ used(); giveFlower(); }
+    else if(act && inPegRange() && !isWatching()){ used(); placePeg(); return; }
+    else if(act && atFlowers() && !flowerPicked && sneaker===cushla){ used(); pickFlower(); }
+    else if(act && atCat() && cat.patCd<=0){ used(); patCat(); }
   } else {
     const ai = aiMove(dt); mx = ai.x; my = ai.y;
     if(ai.peg){ placePeg(); return; }
@@ -987,7 +1082,10 @@ function updatePlay(dt){
   if(graceT > 0) graceT -= dt;
   const hide = hiddenAt(sneaker.x, sneaker.y);
   sneaker.hidden = !!hide;
-  if(graceT <= 0 && lookLanded() && sneaker.moving && !hide){ getCaught(); return; }
+  // a flower in her hand and he hasn't the heart to catch her
+  if(graceT <= 0 && lookLanded() && sneaker.moving && !hide && !sneaker.hasFlower){
+    getCaught(); return;
+  }
 }
 
 /* ---------- Shonty's AI sneak ----------
@@ -1138,6 +1236,20 @@ function drawRoom(t){
         ctx.beginPath(); ctx.arc(cx2, gy+gh*0.22+i*7, 11-i*2, 0, 7);
         ctx.arc(cx2+12, gy+gh*0.22+i*7, 8-i, 0, 7); ctx.fill();
       }
+      // out it comes after she gives him the flower, and stays for the match
+      if(rainbow > 0){
+        ctx.save();
+        ctx.globalAlpha = rainbow*0.8;
+        const rcx = gx+gw*0.46, rcy = gy+gh*0.74, band = Math.max(2.2, gh*0.042);
+        ctx.lineWidth = band;
+        ["#ff5d73","#ff9f45","#ffd93d","#8ce99a","#5ec8ff","#c77dff"].forEach((c,i)=>{
+          ctx.strokeStyle = c;
+          ctx.beginPath();
+          ctx.arc(rcx, rcy, gw*0.40 - i*band, Math.PI, 0);
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
       // a tree, leaning gently in the breeze
       const tx2 = gx+gw*0.74, ty2 = gy+gh*0.63, sway = Math.sin(t*0.9)*2;
       ctx.strokeStyle="#8a5a34"; ctx.lineWidth=5; ctx.lineCap="round";
@@ -1247,6 +1359,32 @@ function drawRoom(t){
   ctx.strokeStyle="#9fb3c4"; ctx.lineWidth=3;
   ctx.beginPath(); ctx.moveTo(rx-14,cTop+46); ctx.lineTo(rx+44,cTop+46); ctx.stroke();
   ctx.restore();
+  // He kept it. Her flower stands in a glass of water on the bench for the
+  // rest of the match, same as the rainbow — the kitchen remembers.
+  if(flowerGiven){
+    const fgx = sx - 132, fgb = cTop + 50;
+    ctx.save();
+    ctx.strokeStyle="#5ea45f"; ctx.lineWidth=2.4; ctx.lineCap="round";
+    ctx.beginPath();
+    ctx.moveTo(fgx, fgb-14);
+    ctx.quadraticCurveTo(fgx-4, fgb-32, fgx+1 + Math.sin(t*1.1)*1.2, fgb-42);
+    ctx.stroke(); ctx.lineCap="butt";
+    ctx.fillStyle="#5ea45f";
+    ctx.beginPath(); ctx.ellipse(fgx-7, fgb-27, 6, 2.8, -0.5, 0, 7); ctx.fill();
+    const bx2 = fgx+1 + Math.sin(t*1.1)*1.2, by2 = fgb-42;
+    ctx.fillStyle="#ffd93d";
+    for(let i=0;i<5;i++){
+      const a = i*Math.PI*2/5;
+      ctx.beginPath(); ctx.arc(bx2+Math.cos(a)*5, by2+Math.sin(a)*5, 4.2, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle="#fff6c9"; ctx.beginPath(); ctx.arc(bx2, by2, 3, 0, 7); ctx.fill();
+    // the glass goes over the stem, so it reads as standing in the water
+    ctx.fillStyle="rgba(214,238,248,.60)"; roundRect(fgx-8, fgb-17, 16, 17, 3, true, false);
+    ctx.fillStyle="rgba(140,200,232,.70)"; roundRect(fgx-7, fgb-9,  14,  8, 2, true, false);
+    ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=1.6;
+    roundRect(fgx-8, fgb-17, 16, 17, 3, false, true);
+    ctx.restore();
+  }
   // floor
   const cols = Math.ceil(W/70), rows = Math.ceil((H-FLOOR_TOP)/50);
   for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
@@ -1608,7 +1746,9 @@ function drawFurniture(f){
     ctx.closePath(); ctx.fill();
     ctx.fillStyle="rgba(255,255,255,.40)"; roundRect(cx-5, top-23, 3, 11, 1.5, true, false);
     // stems, leaves, blooms
-    const blooms = [[-14,-52,"#ff8fab"],[1,-60,"#ffd93d"],[13,-49,"#c77dff"]];
+    // the tall yellow one in the middle is the one she takes — the vase remembers
+    const blooms = [[-14,-52,"#ff8fab"],[1,-60,"#ffd93d"],[13,-49,"#c77dff"]]
+                     .filter((b,i) => !(flowerPicked && i===1));
     ctx.strokeStyle="#5ea45f"; ctx.lineWidth=2.2; ctx.lineCap="round";
     for(const b of blooms){
       ctx.beginPath(); ctx.moveTo(cx, top-24);
@@ -2059,6 +2199,8 @@ function roundRect(x,y,w,h,r,fill,stroke){
 
 /* ---------- particles ---------- */
 function updateFx(dt){
+  if(laU > 0) laU -= dt;
+  if(flowerGiven && rainbow < 1) rainbow = Math.min(1, rainbow + dt*0.5);
   bubbles = bubbles.filter(b=>(b.life-=dt)>0);
   bubbles.forEach(b=>{ b.y+=b.vy*dt; b.x+=b.vx*dt; });
   sparks = sparks.filter(s=>(s.life-=dt)>0);
@@ -2127,6 +2269,24 @@ function drawFx(){
     ctx.textAlign="center"; ctx.fillText("♥",h.x,h.y); ctx.globalAlpha=1; });
   confetti.forEach(c=>{ ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.rot); ctx.fillStyle=c.col;
     ctx.fillRect(-c.r/2,-c.r/2,c.r,c.r*1.6); ctx.restore(); });
+
+  // "La u" — she says it as she hands it over
+  if(laU > 0){
+    const p = Math.min(1, (2.8-laU)*4), rise = (2.8-laU)*13;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, laU*1.6) * p;
+    const bx = cushla.x, by = cushla.y - 132 - rise;
+    ctx.font = fnt(19, true); ctx.textAlign="center"; ctx.textBaseline="middle";
+    const w = ctx.measureText("La u").width + 30*TS, h = 34*TS;
+    ctx.fillStyle="#fff"; ctx.strokeStyle="#ff8fb3"; ctx.lineWidth=3;
+    roundRect(bx-w/2, by-h/2, w, h, h/2, true, true);
+    ctx.beginPath();                                   // little tail on the bubble
+    ctx.moveTo(bx-7, by+h/2-2); ctx.lineTo(bx+1, by+h/2+9); ctx.lineTo(bx+7, by+h/2-2);
+    ctx.closePath(); ctx.fillStyle="#fff"; ctx.fill();
+    ctx.fillStyle="#e0518f"; ctx.fillText("La u", bx, by+1);
+    ctx.textBaseline="alphabetic";
+    ctx.restore();
+  }
 }
 
 /* the peg basket you reload from */
@@ -2500,11 +2660,30 @@ function frame(now){
         ctx.fillStyle="rgba(0,0,0,.22)"; ctx.fillRect(-5,-2,10,3);
         ctx.restore();
       }
+      // the flower, held up in her other hand
+      if(sneaker.hasFlower && scene!=="caught"){
+        ctx.save();
+        ctx.translate(sneaker.x - 28*sneaker.dir, sneaker.y - 62 + Math.sin(T*3.2)*2.5);
+        ctx.rotate(-0.35*sneaker.dir);
+        ctx.strokeStyle="#5ea45f"; ctx.lineWidth=2.4; ctx.lineCap="round";
+        ctx.beginPath(); ctx.moveTo(0,14); ctx.lineTo(0,-4); ctx.stroke();
+        ctx.lineCap="butt";
+        ctx.fillStyle="#5ea45f";
+        ctx.beginPath(); ctx.ellipse(-5,6,5.5,2.6,-0.5,0,7); ctx.fill();
+        ctx.fillStyle="#ffd93d";
+        for(let i=0;i<5;i++){
+          const a = i*Math.PI*2/5 + Math.sin(T*2)*0.06;
+          ctx.beginPath(); ctx.arc(Math.cos(a)*5.2, -6+Math.sin(a)*5.2, 4.4, 0, 7); ctx.fill();
+        }
+        ctx.fillStyle="#fff6c9"; ctx.beginPath(); ctx.arc(0,-6,3.2,0,7); ctx.fill();
+        ctx.restore();
+      }
       if(scene==="play" && !sneaker.hasPeg && !PORTRAIT){
         ctx.fillStyle="#c9772a"; ctx.font="bold 15px Comic Sans MS, Arial"; ctx.textAlign="center";
         ctx.fillText("out of pegs — back to the basket!", sneaker.x, sneaker.y-150);
       }
-      if(scene==="play"){
+      // …but not mid-hug: nothing she presses does anything just now
+      if(scene==="play" && !hug){
         const label = (txt, col, dy) => {
           ctx.font = fnt(15, true); ctx.textAlign="center"; ctx.textBaseline="middle";
           const w = ctx.measureText(txt).width + 18*TS, h = 24*TS;
@@ -2516,7 +2695,11 @@ function frame(now){
         if(sneaker.hidden) label("hidden!", "#2f9e56", -132);
         else if(isWatching()) label(sneaker.moving ? "MOVING!" : "frozen…",
                                     sneaker.moving ? "#e63946" : "#2f9e56", -132);
-        if(inPegRange() && !isWatching() && humanTurn()){
+        if(sneaker.hasFlower && nearWasher() && humanTurn()){
+          ctx.globalAlpha = 0.65+Math.sin(T*10)*0.35;
+          label(TOUCH ? "TAP — give him the flower" : "SPACE — give him the flower", "#e0518f", -160);
+          ctx.globalAlpha = 1;
+        } else if(inPegRange() && !isWatching() && humanTurn()){
           ctx.globalAlpha = 0.65+Math.sin(T*10)*0.35;
           label(TOUCH ? "TAP — peg them!" : "SPACE — peg them!", "#d68300", -160);
           ctx.globalAlpha = 1;
