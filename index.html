@@ -346,10 +346,12 @@ const FURNITURE = PORTRAIT ? [
   // around it, not through it — and each one casts a hiding pocket behind it.
   // They alternate sides so there's always a way past, but never a straight run.
   furn(0.30, 0.16, 196, 56, "table"),
-  furn(0.85, 0.32,  84, 68, "plant"),
-  // up from 0.49 so it clears the cat tree standing in the bottom-left corner
-  furn(0.20, 0.39,  96, 66, "basket"),
-  furn(0.79, 0.66,  92, 52, "flowers"),
+  furn(0.85, 0.32,  84, 68, "guitar"),
+  // The flowers and the ottoman swapped places: the vase sat a few steps from
+  // where she starts, so the flower was a free grab off the opening whistle.
+  // Up here she has to cross the room for it, past him, like everything else.
+  furn(0.20, 0.37,  92, 52, "flowers"),
+  furn(0.79, 0.66,  96, 66, "basket"),
   // The chair took the wide table's place at the front: it's much narrower, so
   // it clears both the cat tree and the spawn point. A piece here must clear
   // BOTH — the table sat over START on short screens (Safari with its address
@@ -359,10 +361,10 @@ const FURNITURE = PORTRAIT ? [
 ] : [
   {x:300, y:300, w:280, h:60, kind:"table"},
   // up from its old y:392 — the bottom-left corner is the cat's now
-  {x: 96, y:232, w: 92, h:74, kind:"plant"},
-  {x:768, y:360, w: 98, h:66, kind:"basket"},
+  {x: 96, y:232, w: 92, h:74, kind:"guitar"},
+  {x:768, y:360, w: 92, h:52, kind:"flowers"},
   {x:430, y:466, w: 96, h:56, kind:"chair"},
-  {x:620, y:452, w: 92, h:52, kind:"flowers"}
+  {x:620, y:452, w: 98, h:66, kind:"basket"}
 ];
 
 /* ---------- the cat tree, and Beanbags asleep on top ----------
@@ -553,6 +555,7 @@ let flowerPicked = false;    // lifted from the vase (which is then a bloom shor
 let flowerGiven  = false;    // handed over — the rainbow is out for the match
 let rainbow = 0;             // 0..1, fades in and stays
 let laU = 0;                 // "La u" bubble timer
+let immT = 0;                // "Immunity!" popup timer, on picking the flower
 
 // the player IS Cushla: sneaking on her turn, on dish duty on his
 const humanTurn  = () => sneaker === cushla;   // player is the one sneaking
@@ -800,6 +803,7 @@ function atFlowers(){
 function pickFlower(){
   flowerPicked = true;
   sneaker.hasFlower = true;          // she keeps her peg too — two hands
+  immT = 2.8;                        // …and say so, or she'll never dare use it
   S.flower();
   for(let i=0;i<14;i++) sparks.push({
     x: FLOWER_TABLE.x + FLOWER_TABLE.w/2 + (Math.random()-.5)*40,
@@ -841,6 +845,10 @@ function updateHug(dt){
     if(Math.hypot(washer.x-washerSinkX(), washer.y-SINK_Y) < 3){
       washer.x = washerSinkX(); washer.y = SINK_Y;
       washer.moving = false; washer.facing = 0; washer.turnT = 0;
+      // …and she turns her back to us again. Without this she stayed facing
+      // front for the rest of the turn, so she looked like she was creeping
+      // about backwards.
+      sneaker.facing = 0; sneaker.turnT = 0;
       LOOK.mode="wash"; LOOK.t=0; LOOK.dur=2.4*pace(); LOOK.warn=false; LOOK._pinged=false;
       hug = null; graceT = 0.6;
     }
@@ -1721,12 +1729,38 @@ function drawFurniture(f){
     ctx.fillStyle="#fff"; ctx.beginPath(); ctx.ellipse(f.x+f.w/2,f.y+16,34,13,0,0,7); ctx.fill();
     ctx.fillStyle="#ff6b6b"; ctx.beginPath(); ctx.arc(f.x+f.w/2-10,f.y+8,10,0,7); ctx.fill();
     ctx.fillStyle="#ffd93d"; ctx.beginPath(); ctx.arc(f.x+f.w/2+8,f.y+9,9,0,7); ctx.fill();
-  } else if(f.kind==="plant"){
-    ctx.fillStyle="#5ec269";
-    for(let i=0;i<7;i++){ const a=-Math.PI/2+(i-3)*0.38;
-      ctx.save(); ctx.translate(f.x+f.w/2,f.y+24); ctx.rotate(a);
-      ctx.beginPath(); ctx.ellipse(0,-30,13,32,0,0,7); ctx.fill(); ctx.restore(); }
-    ctx.fillStyle="#e07a5f"; roundRect(f.x+14,f.y+24,f.w-28,f.h-24,8,true,false);
+  } else if(f.kind==="guitar"){
+    const cx = f.x + f.w/2, base = f.y + f.h;
+    ctx.strokeStyle="#57606f"; ctx.lineWidth=4; ctx.lineCap="round";  // the stand
+    ctx.beginPath();
+    ctx.moveTo(cx-19, base+6); ctx.lineTo(cx+7, base-28);
+    ctx.moveTo(cx+19, base+6); ctx.lineTo(cx-7, base-28);
+    ctx.moveTo(cx-13, base-2); ctx.lineTo(cx+13, base-2);
+    ctx.stroke(); ctx.lineCap="butt";
+    ctx.save();
+    ctx.translate(cx, base-4); ctx.rotate(0.08);
+    ctx.fillStyle="#6b4322"; roundRect(-4.5,-104, 9, 64, 2, true, false);   // neck
+    ctx.fillStyle="#3a2412"; roundRect(-8.5,-122,17, 22, 4, true, false);   // headstock
+    ctx.fillStyle="#e6d5a8";
+    for(let i=0;i<3;i++){
+      ctx.beginPath(); ctx.arc(-12,-117+i*7,2.3,0,7); ctx.fill();
+      ctx.beginPath(); ctx.arc( 12,-117+i*7,2.3,0,7); ctx.fill();
+    }
+    ctx.fillStyle="#e0a75c";                                               // body
+    ctx.beginPath(); ctx.ellipse(0,-20,20,18,0,0,7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0,-42,15,14,0,0,7); ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,.22)";
+    ctx.beginPath(); ctx.ellipse(-7,-24,7,9,-0.3,0,7); ctx.fill();
+    ctx.fillStyle="#3a2412";                                               // soundhole
+    ctx.beginPath(); ctx.arc(0,-30,6.8,0,7); ctx.fill();
+    ctx.strokeStyle="#b9793a"; ctx.lineWidth=1.6;                          // rosette
+    ctx.beginPath(); ctx.arc(0,-30,9.5,0,7); ctx.stroke();
+    ctx.fillStyle="#5a3a1c"; roundRect(-8,-13,16,4,2,true,false);          // bridge
+    ctx.strokeStyle="rgba(255,255,255,.5)"; ctx.lineWidth=0.9;             // strings
+    for(let i=-2;i<=2;i++){
+      ctx.beginPath(); ctx.moveTo(i*1.9,-11); ctx.lineTo(i*2.7,-112); ctx.stroke();
+    }
+    ctx.restore();
   } else if(f.kind==="basket"){
     ctx.fillStyle="#e8c07d"; roundRect(f.x,f.y,f.w,f.h,12,true,false);
     ctx.strokeStyle="#c79a54"; ctx.lineWidth=3;
@@ -2205,6 +2239,7 @@ function roundRect(x,y,w,h,r,fill,stroke){
 /* ---------- particles ---------- */
 function updateFx(dt){
   if(laU > 0) laU -= dt;
+  if(immT > 0) immT -= dt;
   if(flowerGiven && rainbow < 1) rainbow = Math.min(1, rainbow + dt*0.5);
   bubbles = bubbles.filter(b=>(b.life-=dt)>0);
   bubbles.forEach(b=>{ b.y+=b.vy*dt; b.x+=b.vx*dt; });
@@ -2353,6 +2388,31 @@ function drawStatusStrip(){
     fs -= 0.5; ctx.font = fnt(fs, true);
   }
   ctx.fillText(text, W/2, y + h/2 + 1);
+  ctx.restore();
+}
+
+/* She's just lifted the flower. Say what it does — it doesn't block play or
+   stop the clock, it just fades away after a couple of seconds. */
+function drawImmunity(){
+  if(immT <= 0 || scene!=="play") return;
+  const a = Math.min(1, immT*2.2) * Math.min(1, (2.8-immT)*5);
+  const bw = Math.min(400, W-32), bh = PORTRAIT ? 64*TS/1.34 : 74;
+  const bx = W/2 - bw/2, by = PORTRAIT ? HUD_H + 46*SC : 74;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle="#fff"; ctx.strokeStyle="#e0518f"; ctx.lineWidth=5;
+  roundRect(bx, by, bw, bh, 18, true, true);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle="#e0518f"; ctx.font = PORTRAIT ? fnt(20, true) : "bold 27px Comic Sans MS, Arial";
+  ctx.fillText("Immunity!", W/2, by + bh*0.34);
+  ctx.fillStyle="#7a5a3a";
+  const sub2 = "he can't catch you — take the flower to Shonty";
+  let fs2 = PORTRAIT ? 12 : 16;                       // shrink rather than overflow
+  const setF = () => ctx.font = PORTRAIT ? fnt(fs2) : Math.round(fs2)+"px Comic Sans MS, Arial";
+  setF();
+  while(ctx.measureText(sub2).width > bw - 24 && fs2 > 8){ fs2 -= 0.5; setF(); }
+  ctx.fillText(sub2, W/2, by + bh*0.72);
+  ctx.textBaseline="alphabetic";
   ctx.restore();
 }
 
@@ -2747,6 +2807,7 @@ function frame(now){
     if(scene==="roundwin") banner(msg, sub, "#2f9e56");
     if(scene==="over")     banner(msg, sub, "#ffb703");
     drawStatusStrip();
+    drawImmunity();
     drawPeekMeter();
     if(scene==="play" && humanTurn()) drawStick();
     if(!TOUCH){
