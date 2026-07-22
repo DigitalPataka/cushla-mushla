@@ -193,7 +193,13 @@ const S = {
   },
   peek(){ tone(880,0.07,"square",0.07); },
   step(){ tone(160+Math.random()*40,0.04,"sine",0.05); },
-  win(){ [523,659,784,1047,1319].forEach((f,i)=>tone(f,0.4,"triangle",0.18,null,i*0.11)); },
+  win(){                         // ta — daaaaa!
+    [523,659,784].forEach((f,i)=> tone(f, 0.12, "triangle", 0.15, null, i*0.075));  // the run up
+    [523,659,784,1047].forEach(f=> tone(f, 0.95, "triangle", 0.125, null, 0.25));   // and the chord
+    [1047,1319,1568].forEach((f,i)=> tone(f, 0.6, "sine", 0.045, null, 0.28+i*0.05));
+    tone(98, 0.55, "sine", 0.13, 65, 0.25);                                         // a thump under it
+    tone(2093, 0.5, "sine", 0.035, null, 0.42);                                     // shimmer on top
+  },
   lose(){ [400,340,280].forEach((f,i)=>tone(f,0.25,"sine",0.14,null,i*0.13)); },
   ui(){ tone(880,0.08,"triangle",0.12,1200); },
   laugh(){                       // a daft cartoon belly laugh: ha-ha-haaa
@@ -284,14 +290,14 @@ function dkick(when){
   o.frequency.setValueAtTime(125, when);
   o.frequency.exponentialRampToValueAtTime(44, when+0.11);
   g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(0.24, when+0.006);
+  g.gain.exponentialRampToValueAtTime(0.17, when+0.006);
   g.gain.exponentialRampToValueAtTime(0.0001, when+0.22);
   o.connect(g); g.connect(out()); o.start(when); o.stop(when+0.26);
   o.onended = () => { try{ o.disconnect(); g.disconnect(); }catch(e){} };
   // A phone speaker can reproduce none of the above, so the beat also gets a
   // mid-range body and a click — that's the part that actually lands on a
   // handset, and it's what stops the four-to-the-floor vanishing entirely.
-  at(300, 0.075, "triangle", 0.085, when, 140);
+  at(300, 0.075, "triangle", 0.075, when, 140);
   noise(0.012, 0.045, 2300, 1.0, Math.max(0, when - a.currentTime));
 }
 function discoTick(){
@@ -304,13 +310,13 @@ function discoTick(){
     const s = discoStep, t = discoNext;
     const root = [9, 5, 0, 7][Math.floor(s/16) % 4];      // Am  F  C  G
     if(s % 4 === 0) dkick(t);                             // four on the floor
-    if(s % 4 === 2) noise(0.05, 0.040, 9000, 0.9, Math.max(0, t-now));
+    if(s % 4 === 2) noise(0.05, 0.070, 9000, 0.9, Math.max(0, t-now));
     if(s % 2 === 1){                                     // offbeat bass…
-      at(nf(root-24), 0.15, "sawtooth", 0.055, t);
-      at(nf(root-12), 0.14, "sawtooth", 0.034, t);       // …and an octave up, so a
+      at(nf(root-24), 0.15, "sawtooth", 0.100, t);
+      at(nf(root-12), 0.14, "sawtooth", 0.062, t);       // …and an octave up, so a
     }                                                    // phone still hears the line
-    at(nf(root + ARP2[s % 8] + 12), 0.12, "sawtooth", 0.026, t);   // arpeggio
-    if(s % 16 === 0) at(nf(root + 12), 1.0, "triangle", 0.026, t); // pad
+    at(nf(root + ARP2[s % 8] + 12), 0.12, "sawtooth", 0.058, t);   // arpeggio
+    if(s % 16 === 0) at(nf(root + 12), 1.0, "triangle", 0.040, t); // pad
     discoNext += DSPB; discoStep++;
   }
 }
@@ -318,7 +324,11 @@ function discoTick(){
 function musicTick(){
   const a = ac();
   // the music box gets out of the way while the disco is on
-  if(!a || a.state!=="running" || muted || !MUS.on || discoT > 0){ MUS.next = 0; return; }
+  // The music box stands down for the disco, and for the win — the fanfare
+  // should have the room to itself. It comes back when the next match starts.
+  if(!a || a.state!=="running" || muted || !MUS.on || discoT > 0 || scene === "over"){
+    MUS.next = 0; return;
+  }
   const now = a.currentTime, SPB = 0.1875;          // ~160bpm eighth notes
   if(MUS.next < now) MUS.next = now + 0.06;
   while(MUS.next < now + 0.35){
