@@ -962,14 +962,14 @@ function placePeg(){
   } else if(turnPegs >= PER_TURN){
     // two pegs is a turn — hand over
     scene = "roundwin"; sceneT = 0;
-    msg = sneaker===cushla ? "You pegged Shonty — that's two!" : "Shonty pegged you — that's two!";
+    msg = sneaker===cushla ? "That's two on Shonty!" : "That's two on you!";
     sub = sneaker===cushla
         ? "Your turn's done. Back to the sink — now he's coming for you."
         : "That's his turn done. Your turn to sneak up on him!";
   } else {
     const left = PER_TURN - turnPegs;
     scene = "roundwin"; sceneT = 0;
-    msg = sneaker===cushla ? "PEGGED! You got one on Shonty." : "PEGGED! Shonty got one on you.";
+    msg = sneaker===cushla ? "PEGGED! You got Shonty." : "PEGGED! Shonty got you.";
     sub = sneaker===cushla
         ? "Sneak back to the basket for another — " + left + " more this turn."
         : "He's off to fetch another peg — he can get " + left + " more this turn.";
@@ -1036,7 +1036,8 @@ function dropAPeg(){
 function getCaught(){
   scene = "caught"; sceneT = 0;
   catchAnim = {t:0, dropped:false, snapped:false, laugh:0, laughed:false};
-  msg = sneaker===cushla ? "UNDIE SNAP! 😖" : "UNDIE SNAP! You got him! 😄";
+  // kept short enough to sit on one line — see banner()'s wrapping
+  msg = sneaker===cushla ? "UNDIE SNAP! 😖" : "UNDIE SNAP! Got him! 😄";
   sub = sneaker===cushla
       ? "Caught you! Shonty grabbed the elastic of your undies, stretched it right out and — TWANG — let it go. \"OW!\""
       : "Got him! You grabbed the elastic of Shonty's undies, pulled it way out and — TWANG — let go. \"OW!\"";
@@ -2359,40 +2360,60 @@ function drawScore(x,y,bw,name,col,n,active){
 function banner(title, subtitle, col, icon){
   ctx.save();
   ctx.fillStyle="rgba(0,0,0,.28)"; ctx.fillRect(0,0,W,H);
-  // 176 only had room for two subtitle lines before the "carry on" prompt
-  const bw=Math.min(640, W-28), bh=PORTRAIT?Math.round(268*TS/1.34):202;
-  const bx=(W-bw)/2, by=(H-bh)/2-10;
+  const bw = Math.min(640, W-28);
+  const tFont = PORTRAIT ? fnt(23, true) : "bold 40px Comic Sans MS, Arial";
+  const sFont = PORTRAIT ? fnt(14)       : "18px Comic Sans MS, Arial";
+  const tLh = PORTRAIT ? 30*TS/1.34 : 42, sLh = PORTRAIT ? 24*TS/1.34 : 25;
+  const padT = PORTRAIT ? 30*TS/1.34 : 34, gap = PORTRAIT ? 16*TS/1.34 : 18;
+  const padB = PORTRAIT ? 58*TS/1.34 : 60;      // room for the "carry on" line
+  // The box is laid out from what's actually in it. The subtitle used to start
+  // at a FIXED height, so any title long enough to wrap onto a second line was
+  // drawn straight over the top of it.
+  ctx.font = tFont; const tl = wrapLines(title, bw-40);
+  ctx.font = sFont; const sl = wrapLines(subtitle, bw-44);
+  const bh = Math.round(padT + tl.length*tLh + gap + sl.length*sLh + padB);
+  const bx = (W-bw)/2, by = Math.max(8, (H-bh)/2 - 10);
+
   ctx.fillStyle="#fff"; ctx.strokeStyle=col; ctx.lineWidth=7;
   roundRect(bx,by,bw,bh,26,true,true);
-  ctx.textAlign="center";
-  ctx.fillStyle=col; ctx.font = PORTRAIT ? fnt(23, true) : "bold 40px Comic Sans MS, Arial";
-  const ty = by+(PORTRAIT?48*TS/1.34:66);
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+
+  ctx.font = tFont; ctx.fillStyle = col;
   let tx = W/2;
-  if(icon){
-    const tw = ctx.measureText(title).width, gap = PORTRAIT ? 9*TS/1.34 : 14;
-    tx = W/2 - (gap + icon.w)/2;                       // shift the words left…
-    icon.draw(tx + tw/2 + gap + icon.w/2, ty - (PORTRAIT?9*TS/1.34:13));   // …cat on the right
-    ctx.fillStyle = col;                               // the icon changed the fill
+  if(icon && tl.length === 1){          // only pair the cat with a one-line title
+    const tw = ctx.measureText(tl[0]).width, g = PORTRAIT ? 9*TS/1.34 : 14;
+    tx = W/2 - (g + icon.w)/2;
+    icon.draw(tx + tw/2 + g + icon.w/2, by + padT + tLh*0.5);
+    ctx.fillStyle = col;                // the icon changed the fill
   }
-  wrapText(title, tx, ty, bw-40, PORTRAIT?30*TS/1.34:34);
-  ctx.fillStyle="#7a5a3a"; ctx.font = PORTRAIT ? fnt(14) : "18px Comic Sans MS, Arial";
-  wrapText(subtitle, W/2, by+(PORTRAIT?112*TS/1.34:104), bw-44, PORTRAIT?24*TS/1.34:24);
+  tl.forEach((l,i)=> ctx.fillText(l, tx, by + padT + tLh*(i+0.5)));
+
+  ctx.font = sFont; ctx.fillStyle = "#7a5a3a";
+  const sTop = by + padT + tl.length*tLh + gap;
+  sl.forEach((l,i)=> ctx.fillText(l, W/2, sTop + sLh*(i+0.5)));
+
   // every popup waits for you — say so, and make it obvious when it's ready
   if(canAdvance()){
     ctx.fillStyle = (Math.sin(T*5)>0) ? col : "#ff8b3d";
     ctx.font = PORTRAIT ? fnt(15, true) : "bold 21px Comic Sans MS, Arial";
-    ctx.fillText(TOUCH ? "tap to carry on ▸" : "press ENTER to carry on ▸", W/2, by+bh-20);
+    ctx.fillText(TOUCH ? "tap to carry on ▸" : "press ENTER to carry on ▸",
+                 W/2, by + bh - padB*0.44);
   }
+  ctx.textBaseline="alphabetic";
   ctx.restore();
 }
-function wrapText(text,x,y,maxW,lh){
-  const words=text.split(" "); let line="", yy=y;
+/* Split text the same way it will be drawn, so a caller can lay out from the
+   real line count rather than assuming one. Uses the CURRENT ctx.font. */
+function wrapLines(text, maxW){
+  const words = String(text).split(" ");
+  const lines = []; let line = "";
   for(const w of words){
-    const test=line+w+" ";
-    if(ctx.measureText(test).width>maxW && line){ ctx.fillText(line,x,yy); line=w+" "; yy+=lh; }
-    else line=test;
+    const test = line + w + " ";
+    if(ctx.measureText(test).width > maxW && line){ lines.push(line.trim()); line = w + " "; }
+    else line = test;
   }
-  ctx.fillText(line,x,yy);
+  lines.push(line.trim());
+  return lines;
 }
 function roundRect(x,y,w,h,r,fill,stroke){
   ctx.beginPath();
